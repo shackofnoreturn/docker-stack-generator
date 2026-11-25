@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QStatusBar,
     QTabWidget,
+    QTextEdit,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -222,6 +223,15 @@ class MainWindow(QMainWindow):
         self._env_input.textChanged.connect(lambda _: self._update_preview_header(self._stack_name_input.text()))
         env_row.addWidget(self._env_input, 1)
         ng.addLayout(env_row)
+
+        desc_row = QHBoxLayout()
+        desc_row.addWidget(QLabel("Description:"))
+        self._description_input = QTextEdit()
+        self._description_input.setPlaceholderText("Short description of what this stack does (written to README.md)…")
+        self._description_input.setFixedHeight(60)
+        self._description_input.textChanged.connect(lambda: self._refresh_preview())
+        desc_row.addWidget(self._description_input, 1)
+        ng.addLayout(desc_row)
         lv.addWidget(name_group)
 
         # Output path display
@@ -496,6 +506,7 @@ class MainWindow(QMainWindow):
             name=name,
             display_name=display_name,
             environment=env,
+            description=self._description_input.toPlainText().strip(),
             stacks_root=settings.stacks_root,
             services=list(self._services),
             network_vars={
@@ -543,6 +554,10 @@ class MainWindow(QMainWindow):
         self._env_input.setText(cfg.environment)
         self._stack_name_input.blockSignals(False)
         self._env_input.blockSignals(False)
+
+        self._description_input.blockSignals(True)
+        self._description_input.setPlainText(getattr(cfg, "description", "") or "")
+        self._description_input.blockSignals(False)
 
         self._services = [ServiceConfig(**asdict(s)) for s in cfg.services]
         self._refresh_services_list()
@@ -684,6 +699,7 @@ class MainWindow(QMainWindow):
                 return
         self._stack_name_input.clear()
         self._env_input.setText(settings.stacks_env)
+        self._description_input.clear()
         self._services.clear()
         self._refresh_services_list()
         self._preview_rendered.clear()

@@ -45,6 +45,7 @@ class SavedStack:
                 "display_name": self.config.display_name,
                 "environment": self.config.environment,
                 "stacks_root": self.config.stacks_root,
+                "description": self.config.description,
                 "networks": list(self.config.networks),
                 "network_vars": dict(self.config.network_vars),
                 "services": [asdict(s) for s in self.config.services],
@@ -54,12 +55,17 @@ class SavedStack:
     @classmethod
     def from_dict(cls, data: dict) -> SavedStack:
         sdata = data["stack"]
-        services = [ServiceConfig(**svc) for svc in sdata.get("services", [])]
+        raw_services = sdata.get("services", [])
+        services = []
+        for svc in raw_services:
+            svc.setdefault("runtime_dirs", [])
+            services.append(ServiceConfig(**svc))
         cfg = StackConfig(
             name=sdata["name"],
             display_name=sdata.get("display_name", sdata["name"]),
             environment=sdata.get("environment", "development"),
             stacks_root=sdata.get("stacks_root", ""),
+            description=sdata.get("description", ""),
             services=services,
             networks=sdata.get("networks", ["traefik", "monitoring"]),
             network_vars=sdata.get(
@@ -160,6 +166,7 @@ class StackLibrary:
             display_name=new_display_name.strip(),
             environment=env,
             stacks_root=existing.config.stacks_root,
+            description=existing.config.description,
             services=[ServiceConfig(**asdict(s)) for s in existing.config.services],
             networks=list(existing.config.networks),
             network_vars=dict(existing.config.network_vars),

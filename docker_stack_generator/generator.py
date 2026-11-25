@@ -26,6 +26,7 @@ class ServiceConfig:
     port_source: str                # "image metadata" / "manual" / …
     restart_profile: str            # low / medium / high
     resource_profile: str           # low / medium / high
+    runtime_dirs: list[str] = field(default_factory=list)  # subdirs under stack/service/
     metadata: dict = field(default_factory=dict)
 
 
@@ -35,6 +36,7 @@ class StackConfig:
     display_name: str               # original user input
     environment: str                # e.g. "development"
     stacks_root: str                # absolute path to stacks/ parent
+    description: str = ""           # human-readable stack description
     services: list[ServiceConfig] = field(default_factory=list)
     networks: list[str] = field(default_factory=lambda: ["traefik", "monitoring"])
     network_vars: dict[str, str] = field(default_factory=lambda: {
@@ -91,8 +93,27 @@ def generate_stack_yml(cfg: StackConfig) -> str:
     lines.append(f"stack_name: {cfg.name}")
     lines.append("compose_file: compose.yml")
     lines.append("")
-    lines.append("# TODO: Runtime directories (relative to PATH_DOCKER_DATA)")
-    lines.append("runtime_directories: []")
+
+    # Collect all runtime directories from all services
+    runtime_dirs: list[str] = []
+    for svc in cfg.services:
+        if hasattr(svc, "runtime_dirs") and svc.runtime_dirs:
+            for subdir in svc.runtime_dirs:
+                subdir = subdir.strip().strip("/")
+                if subdir:
+                    runtime_dirs.append(f"{cfg.name}/{svc.name}/{subdir}")
+                else:
+                    runtime_dirs.append(f"{cfg.name}/{svc.name}")
+        else:
+            # No explicit runtime_dirs — still emit nothing (empty)
+            pass
+
+    if runtime_dirs:
+        lines.append("runtime_directories:")
+        for rd in runtime_dirs:
+            lines.append(f"  - {rd}")
+    else:
+        lines.append("runtime_directories: []")
     lines.append("")
     lines.append("networks:")
     for net_name, net_var in cfg.network_vars.items():
@@ -157,21 +178,20 @@ def generate_compose_j2(cfg: StackConfig) -> str:
 
 def generate_readme(cfg: StackConfig) -> str:
     lines = [f"# Stack: {cfg.name}", ""]
-    lines.append("*TODO: Add a short description of this stack.*")
+    if cfg.description and cfg.description.strip():
+        lines.append(cfg.description.strip())
+    else:
+        lines.append("*TODO: STACK DESCRIPTION HERE.*")
     lines.append("")
-    lines.append("## What")
-    lines.append("")
-    lines.append("TODO: Describe what this stack runs and its purpose in your Docker Swarm environment.")
-    lines.append("")
-    lines.append("### Services")
+    lines.append("## Services")
 
     for svc in cfg.services:
         meta = svc.metadata
         title = svc.name.replace("_", " ").title()
         lines.append("")
-        lines.append(f"#### {title}")
+        lines.append(f"### {title}")
         lines.append("")
-        lines.append("##### Image & Repository")
+        lines.append("#### Image & Repository")
         lines.append("")
         lines.append("| Field | Value |")
         lines.append("|---|---|")
@@ -185,16 +205,7 @@ def generate_readme(cfg: StackConfig) -> str:
         lines.append(f"| Port | {svc.port} ({svc.port_source}) |")
 
         lines.append("")
-        lines.append("##### Repository Statistics")
-        lines.append("")
-        lines.append("| Field | Value |")
-        lines.append("|---|---|")
-        lines.append(f"| Stars | {meta.get('stars', 'unknown')} |")
-        lines.append(f"| Pulls | {meta.get('pulls', 'unknown')} |")
-        lines.append(f"| Last updated | {meta.get('last_updated', 'unknown')} |")
-
-        lines.append("")
-        lines.append("##### Image Runtime Configuration")
+        lines.append("#### Image Runtime Configuration")
         lines.append("")
         lines.append("| Field | Value |")
         lines.append("|---|---|")
@@ -209,7 +220,7 @@ def generate_readme(cfg: StackConfig) -> str:
         lines.append(f"| Command | `{cmd}` |")
 
         lines.append("")
-        lines.append("##### Network")
+        lines.append("#### Network")
         lines.append("")
         lines.append("| Field | Value |")
         lines.append("|---|---|")
@@ -219,7 +230,7 @@ def generate_readme(cfg: StackConfig) -> str:
 
         env_vars = meta.get("env") or []
         lines.append("")
-        lines.append("##### Environment Defaults")
+        lines.append("#### Environment Defaults")
         lines.append("")
         lines.append("| Variable | Default |")
         lines.append("|---|---|")
@@ -230,7 +241,7 @@ def generate_readme(cfg: StackConfig) -> str:
 
         volumes = meta.get("volumes") or {}
         lines.append("")
-        lines.append("##### Persistent Volumes Declared by Image")
+        lines.append("#### Persistent Volumes Declared by Image")
         lines.append("")
         lines.append("| Container Path |")
         lines.append("|---|")
@@ -239,7 +250,7 @@ def generate_readme(cfg: StackConfig) -> str:
 
         labels = meta.get("labels") or {}
         lines.append("")
-        lines.append("##### OCI Labels")
+        lines.append("#### OCI Labels")
         lines.append("")
         lines.append("| Label | Value |")
         lines.append("|---|---|")
@@ -259,7 +270,7 @@ def generate_readme(cfg: StackConfig) -> str:
             ("revision", "org.opencontainers.image.revision"),
         ]
         lines.append("")
-        lines.append("##### Project & Publisher Information")
+        lines.append("#### Project & Publisher Information")
         lines.append("")
         lines.append("| Field | Value |")
         lines.append("|---|---|")
@@ -267,23 +278,13 @@ def generate_readme(cfg: StackConfig) -> str:
             val = labels.get(label_key, "not provided")
             lines.append(f"| {display_name} | {val} |")
 
-        layer_sizes = meta.get("layer_sizes") or []
         lines.append("")
-        lines.append("##### Image Layers")
-        lines.append("")
-        lines.append("| Layer | Compressed size |")
-        lines.append("|---|---|")
-        for i, size in enumerate(layer_sizes, 1):
-            lines.append(f"| {i} | {size} bytes |")
-        lines.append(f"| Total compressed size | {meta.get('compressed_size', 'unknown')} bytes |")
-
-        lines.append("")
-        lines.append("##### Operational Notes")
+        lines.append("#### Operational Notes")
         lines.append("")
         lines.append("- TODO: Document service-specific configuration, storage, routing, healthchecks, and operational behavior.")
 
     lines.append("")
-    lines.append("## Runtime assumptions")
+    lines.append("# Runtime assumptions")
     lines.append("")
     lines.append("- Docker Swarm with the external `traefik` and `monitoring` networks available.")
     lines.append("- External Docker networks `NETWORK_TRAEFIK` and `NETWORK_MONITORING` must exist.")
@@ -292,7 +293,7 @@ def generate_readme(cfg: StackConfig) -> str:
     lines.append("")
     lines.append("The stack is designed to work with the infrastructure repository that creates the required Docker networks, runtime directories, and deployment workflow.")
     lines.append("")
-    lines.append("### Files")
+    lines.append("## Files")
     lines.append("")
     lines.append("- `compose.yml.j2`: Jinja2 Docker Compose template")
     lines.append("- `stack.yml`: Stack metadata, runtime directories, and environment variables")
@@ -301,19 +302,17 @@ def generate_readme(cfg: StackConfig) -> str:
     lines.append("- `../../templates/`: Shared Jinja snippets for policies, resources, logging, labels, placement, healthchecks, and mounts")
     lines.append("- `README.md`: Stack documentation")
     lines.append("")
-    lines.append("### Secrets")
+    lines.append("## Secrets")
     lines.append("")
     lines.append("- TODO: List required Docker Swarm secrets and explain their purpose; write None if not applicable.")
     lines.append("")
-    lines.append("## How")
+    lines.append("# How")
     lines.append("")
-    lines.append("### Semaphore")
-    lines.append("")
-    lines.append("The Compose template includes shared snippets from `stacks/templates/` for logging, Swarm lifecycle policies, and resource profiles.")
+    lines.append("## Semaphore")
     lines.append("")
     lines.append("Use the [ansible-docker-swarm-services](https://github.com/shackofnoreturn/ansible-docker-swarm-services) repository in Semaphore and use the playbook `playbook-stack-deploy.yml` to deploy this stack.")
     lines.append("")
-    lines.append("### CLI")
+    lines.append("## CLI")
     lines.append("")
     lines.append("After rendering `compose.yml` from `compose.yml.j2`, deploy it with:")
     lines.append("")
@@ -321,9 +320,6 @@ def generate_readme(cfg: StackConfig) -> str:
     lines.append(f"docker stack deploy --compose-file compose.yml {cfg.name}")
     lines.append("```")
     lines.append("")
-    lines.append("## Notes")
-    lines.append("")
-    lines.append("- TODO: Add stack-specific notes, environment differences, and operational considerations.")
 
     return "\n".join(lines) + "\n"
 

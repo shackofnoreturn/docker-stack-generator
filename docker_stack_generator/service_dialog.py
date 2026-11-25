@@ -165,6 +165,46 @@ class ServiceDialog(QDialog):
         pgl.addWidget(self._resource_profile)
         rv.addWidget(profile_group)
 
+        # Runtime directories
+        rdir_group = QGroupBox("Runtime Directories")
+        rdir_group.setToolTip(
+            "Subdirectories under <stack>/<service>/  that will be created at runtime.\n"
+            "Leave empty to add just <stack>/<service>/ itself; add subdirectory names for deeper paths."
+        )
+        rdl = QVBoxLayout(rdir_group)
+
+        rdir_hint = QLabel(
+            "<i>Each entry creates <b>&lt;stack&gt;/&lt;service&gt;/&lt;subdir&gt;</b>. "
+            "Leave subdir blank to include the base path.</i>"
+        )
+        rdir_hint.setWordWrap(True)
+        rdir_hint.setStyleSheet("color: #666; font-size: 11px;")
+        rdl.addWidget(rdir_hint)
+
+        self._rdir_list = QListWidget()
+        self._rdir_list.setMaximumHeight(90)
+        self._rdir_list.setAlternatingRowColors(True)
+        rdl.addWidget(self._rdir_list)
+
+        rdir_input_row = QHBoxLayout()
+        self._rdir_input = QLineEdit()
+        self._rdir_input.setPlaceholderText("subdirectory name (or leave blank for base path)")
+        self._rdir_input.returnPressed.connect(self._add_rdir)
+        rdir_input_row.addWidget(self._rdir_input, 1)
+
+        rdir_add_btn = QPushButton("＋ Add")
+        rdir_add_btn.setMaximumWidth(60)
+        rdir_add_btn.clicked.connect(self._add_rdir)
+        rdir_input_row.addWidget(rdir_add_btn)
+
+        rdir_remove_btn = QPushButton("✕")
+        rdir_remove_btn.setMaximumWidth(32)
+        rdir_remove_btn.clicked.connect(self._remove_rdir)
+        rdir_input_row.addWidget(rdir_remove_btn)
+
+        rdl.addLayout(rdir_input_row)
+        rv.addWidget(rdir_group)
+
         self._meta_label = QLabel("No metadata fetched yet.")
         self._meta_label.setWordWrap(True)
         self._meta_label.setStyleSheet("color: #666; font-size: 11px;")
@@ -196,6 +236,23 @@ class ServiceDialog(QDialog):
         self._restart_profile.set_value(svc.restart_profile)
         self._resource_profile.set_value(svc.resource_profile)
         self._metadata = svc.metadata
+        self._rdir_list.clear()
+        for rd in (svc.runtime_dirs or []):
+            self._rdir_list.addItem(QListWidgetItem(rd))
+
+    # ------------------------------------------------------------------
+    # Runtime directories
+    # ------------------------------------------------------------------
+
+    def _add_rdir(self):
+        subdir = self._rdir_input.text().strip().strip("/")
+        self._rdir_list.addItem(QListWidgetItem(subdir))
+        self._rdir_input.clear()
+
+    def _remove_rdir(self):
+        row = self._rdir_list.currentRow()
+        if row >= 0:
+            self._rdir_list.takeItem(row)
 
     # ------------------------------------------------------------------
     # Search
@@ -344,6 +401,10 @@ class ServiceDialog(QDialog):
             self._port_combo.itemText(i) for i in range(self._port_combo.count())
         ]:
             port_source = "image metadata"
+        runtime_dirs = [
+            self._rdir_list.item(i).text()
+            for i in range(self._rdir_list.count())
+        ]
         return ServiceConfig(
             name=name,
             display_name=display_name,
@@ -355,5 +416,6 @@ class ServiceDialog(QDialog):
             port_source=port_source,
             restart_profile=self._restart_profile.value(),
             resource_profile=self._resource_profile.value(),
+            runtime_dirs=runtime_dirs,
             metadata=self._metadata,
         )
