@@ -1,0 +1,581 @@
+"""
+Stack scaffold generator – pure Python equivalent of new-stack.sh.
+No I/O side-effects on import; call generate_stack() to write files.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# Data models
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ServiceConfig:
+    name: str                       # slugified
+    display_name: str               # original user input
+    image: str                      # e.g. linuxserver/qbittorrent
+    image_base: str                 # image without tag
+    image_tag: str                  # tag, e.g. "latest"
+    description: str
+    port: str                       # numeric string or "TODO"
+    port_source: str                # "image metadata" / "manual" / …
+    restart_profile: str            # low / medium / high
+    resource_profile: str           # low / medium / high
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass
+class StackConfig:
+    name: str                       # slugified
+    display_name: str               # original user input
+    environment: str                # e.g. "development"
+    stacks_root: str                # absolute path to stacks/ parent
+    services: list[ServiceConfig] = field(default_factory=list)
+    networks: list[str] = field(default_factory=lambda: ["traefik", "monitoring"])
+    network_vars: dict[str, str] = field(default_factory=lambda: {
+        "traefik": "NETWORK_TRAEFIK",
+        "monitoring": "NETWORK_MONITORING",
+    })
+
+    @property
+    def stack_dir(self) -> Path:
+        return Path(self.stacks_root) / self.environment / self.name
+
+    @property
+    def templates_dir(self) -> Path:
+        # stacks/templates relative to stacks_root
+        return Path(self.stacks_root) / "templates"
+
+
+# ---------------------------------------------------------------------------
+# Slug helper
+# ---------------------------------------------------------------------------
+
+def slugify(value: str) -> str:
+    value = value.lower()
+    value = re.sub(r"[^a-z0-9]+", "_", value)
+    value = value.strip("_")
+    return value
+
+
+def split_image(image: str) -> tuple[str, str]:
+    """Split 'repo/name:tag' → ('repo/name', 'tag'). Defaults tag to 'latest'."""
+    last = image.split("/")[-1]
+    if ":" in last:
+        tag = last.split(":")[-1]
+        base = image[: image.rfind(":")]
+        return base, tag
+    return image, "latest"
+
+
+# ---------------------------------------------------------------------------
+# File generators
+# ---------------------------------------------------------------------------
+
+def _env_prefix(service_name: str) -> str:
+    return service_name.upper().replace("-", "_")
+
+
+def generate_stack_yml(cfg: StackConfig) -> str:
+    lines = ["---"]
+    lines.append("# " + "-" * 69)
+    title = cfg.name.replace("_", " ").title()
+    lines.append(f"# {title} Variables")
+    lines.append("# " + "-" * 69)
+    lines.append("")
+    lines.append(f"stack_name: {cfg.name}")
+    lines.append("compose_file: compose.yml")
+    lines.append("")
+    lines.append("# TODO: Runtime directories (relative to PATH_DOCKER_DATA)")
+    lines.append("runtime_directories: []")
+    lines.append("")
+    lines.append("networks:")
+    for net_name, net_var in cfg.network_vars.items():
+        lines.append(f"  {net_name}:")
+        lines.append(f"    name: {net_var}")
+        lines.append("    driver: overlay")
+        lines.append("    external: true")
+        lines.append("")
+    lines.append("environment:")
+    for svc in cfg.services:
+        pfx = _env_prefix(svc.name)
+        lines.append(f"  {pfx}_IMAGE: \"{svc.image_base}\"")
+        lines.append(f"  {pfx}_VERSION: \"{svc.image_tag}\"")
+        if svc.port == "TODO":
+            lines.append(f"  {pfx}_PORT: # TODO")
+        else:
+            lines.append(f"  {pfx}_PORT: {svc.port}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def generate_compose_j2(cfg: StackConfig) -> str:
+    lines = [f"# Stack: {cfg.name}", "", "services:", ""]
+    for svc in cfg.services:
+        pfx = _env_prefix(svc.name)
+        title = svc.name.replace("_", " ").title()
+        lines.append("# " + "=" * 75)
+        lines.append(f"# {title}")
+        lines.append("# " + "=" * 75)
+        lines.append("")
+        lines.append(f"  {svc.name}:")
+        lines.append(f"    image: ${{{pfx}_IMAGE}}:${{{pfx}_VERSION}}")
+        lines.append("")
+        lines.append("    environment:")
+        lines.append("      TZ: ${TZ}")
+        lines.append("")
+        lines.append("{% include '../../templates/common/logging.yml.j2' %}")
+        lines.append("")
+        lines.append(f"    # TODO: Add service-specific volumes and configuration here.")
+        lines.append(f"    # TODO: Example: ${{PATH_DOCKER_DATA}}/${{env}}/{cfg.name}/{svc.name}:/config")
+        lines.append("")
+        lines.append("    networks:")
+        for net in cfg.networks:
+            lines.append(f"      - {net}")
+        lines.append("")
+        lines.append("    deploy:")
+        lines.append("      replicas: 1")
+        lines.append(f"{{% include '../../templates/policies/{svc.restart_profile}.yml.j2' %}}")
+        lines.append(f"{{% include '../../templates/resources/{svc.resource_profile}.yml.j2' %}}")
+        lines.append("      # TODO: Add placement constraints and optional Traefik/Homepage labels.")
+        lines.append("")
+
+    lines.append("networks:")
+    for net_name, net_var in cfg.network_vars.items():
+        lines.append(f"  {net_name}:")
+        lines.append(f"    name: ${{{net_var}}}")
+        lines.append("    external: true")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_readme(cfg: StackConfig) -> str:
+    lines = [f"# Stack: {cfg.name}", ""]
+    lines.append("*TODO: Add a short description of this stack.*")
+    lines.append("")
+    lines.append("## What")
+    lines.append("")
+    lines.append("TODO: Describe what this stack runs and its purpose in your Docker Swarm environment.")
+    lines.append("")
+    lines.append("### Services")
+
+    for svc in cfg.services:
+        meta = svc.metadata
+        title = svc.name.replace("_", " ").title()
+        lines.append("")
+        lines.append(f"#### {title}")
+        lines.append("")
+        lines.append("##### Image & Repository")
+        lines.append("")
+        lines.append("| Field | Value |")
+        lines.append("|---|---|")
+        lines.append(f"| Image | `{svc.image}` |")
+        lines.append(f"| Tag | `{meta.get('tag', svc.image_tag)}` |")
+        lines.append(f"| Repository | {meta.get('repository', svc.image_base)} |")
+        lines.append(f"| Docker Hub | {meta.get('hub_url', '')} |")
+        lines.append(f"| Digest | `{meta.get('digest', 'unknown')}` |")
+        desc = (meta.get("description") or meta.get("short_description") or "TODO").replace("\n", " ")
+        lines.append(f"| Description | {desc} |")
+        lines.append(f"| Port | {svc.port} ({svc.port_source}) |")
+
+        lines.append("")
+        lines.append("##### Repository Statistics")
+        lines.append("")
+        lines.append("| Field | Value |")
+        lines.append("|---|---|")
+        lines.append(f"| Stars | {meta.get('stars', 'unknown')} |")
+        lines.append(f"| Pulls | {meta.get('pulls', 'unknown')} |")
+        lines.append(f"| Last updated | {meta.get('last_updated', 'unknown')} |")
+
+        lines.append("")
+        lines.append("##### Image Runtime Configuration")
+        lines.append("")
+        lines.append("| Field | Value |")
+        lines.append("|---|---|")
+        lines.append(f"| OS | {meta.get('os', 'unknown')} |")
+        lines.append(f"| Architecture | {meta.get('architecture', 'unknown')} |")
+        cfg_data = meta.get("docker_config", {})
+        lines.append(f"| User | {cfg_data.get('User', 'default')} |")
+        lines.append(f"| Working directory | {cfg_data.get('WorkingDir', 'unset')} |")
+        ep = " ".join(cfg_data.get("Entrypoint") or []) or "default"
+        cmd = " ".join(cfg_data.get("Cmd") or []) or "default"
+        lines.append(f"| Entrypoint | `{ep}` |")
+        lines.append(f"| Command | `{cmd}` |")
+
+        lines.append("")
+        lines.append("##### Network")
+        lines.append("")
+        lines.append("| Field | Value |")
+        lines.append("|---|---|")
+        ports = meta.get("exposed_ports") or {}
+        port_str = ", ".join(ports.keys()) if ports else "none declared"
+        lines.append(f"| Exposed ports | {port_str} |")
+
+        env_vars = meta.get("env") or []
+        lines.append("")
+        lines.append("##### Environment Defaults")
+        lines.append("")
+        lines.append("| Variable | Default |")
+        lines.append("|---|---|")
+        for ev in env_vars:
+            if "=" in ev:
+                k, _, v = ev.partition("=")
+                lines.append(f"| `{k}` | `{v or 'empty'}` |")
+
+        volumes = meta.get("volumes") or {}
+        lines.append("")
+        lines.append("##### Persistent Volumes Declared by Image")
+        lines.append("")
+        lines.append("| Container Path |")
+        lines.append("|---|")
+        for vpath in volumes:
+            lines.append(f"| `{vpath}` |")
+
+        labels = meta.get("labels") or {}
+        lines.append("")
+        lines.append("##### OCI Labels")
+        lines.append("")
+        lines.append("| Label | Value |")
+        lines.append("|---|---|")
+        for lk, lv in labels.items():
+            lv_clean = str(lv).replace("\n", " ")
+            lines.append(f"| `{lk}` | {lv_clean} |")
+
+        oci_fields = [
+            ("title", "org.opencontainers.image.title"),
+            ("description", "org.opencontainers.image.description"),
+            ("url", "org.opencontainers.image.url"),
+            ("source", "org.opencontainers.image.source"),
+            ("documentation", "org.opencontainers.image.documentation"),
+            ("vendor", "org.opencontainers.image.vendor"),
+            ("licenses", "org.opencontainers.image.licenses"),
+            ("created", "org.opencontainers.image.created"),
+            ("revision", "org.opencontainers.image.revision"),
+        ]
+        lines.append("")
+        lines.append("##### Project & Publisher Information")
+        lines.append("")
+        lines.append("| Field | Value |")
+        lines.append("|---|---|")
+        for display_name, label_key in oci_fields:
+            val = labels.get(label_key, "not provided")
+            lines.append(f"| {display_name} | {val} |")
+
+        layer_sizes = meta.get("layer_sizes") or []
+        lines.append("")
+        lines.append("##### Image Layers")
+        lines.append("")
+        lines.append("| Layer | Compressed size |")
+        lines.append("|---|---|")
+        for i, size in enumerate(layer_sizes, 1):
+            lines.append(f"| {i} | {size} bytes |")
+        lines.append(f"| Total compressed size | {meta.get('compressed_size', 'unknown')} bytes |")
+
+        lines.append("")
+        lines.append("##### Operational Notes")
+        lines.append("")
+        lines.append("- TODO: Document service-specific configuration, storage, routing, healthchecks, and operational behavior.")
+
+    lines.append("")
+    lines.append("## Runtime assumptions")
+    lines.append("")
+    lines.append("- Docker Swarm with the external `traefik` and `monitoring` networks available.")
+    lines.append("- External Docker networks `NETWORK_TRAEFIK` and `NETWORK_MONITORING` must exist.")
+    lines.append("- Required global variables such as `${TZ}`, `${PATH_DOCKER_DATA}`, `${NETWORK_TRAEFIK}`, and `${env}` are supplied by the deployment inventory.")
+    lines.append("- TODO: Add any required node labels, NFS mounts, runtime directories, and external secrets.")
+    lines.append("")
+    lines.append("The stack is designed to work with the infrastructure repository that creates the required Docker networks, runtime directories, and deployment workflow.")
+    lines.append("")
+    lines.append("### Files")
+    lines.append("")
+    lines.append("- `compose.yml.j2`: Jinja2 Docker Compose template")
+    lines.append("- `stack.yml`: Stack metadata, runtime directories, and environment variables")
+    lines.append("- `configs/`: Stack-specific configuration files")
+    lines.append("- `secrets/`: Secret-generation notes and encrypted secret files")
+    lines.append("- `../../templates/`: Shared Jinja snippets for policies, resources, logging, labels, placement, healthchecks, and mounts")
+    lines.append("- `README.md`: Stack documentation")
+    lines.append("")
+    lines.append("### Secrets")
+    lines.append("")
+    lines.append("- TODO: List required Docker Swarm secrets and explain their purpose; write None if not applicable.")
+    lines.append("")
+    lines.append("## How")
+    lines.append("")
+    lines.append("### Semaphore")
+    lines.append("")
+    lines.append("The Compose template includes shared snippets from `stacks/templates/` for logging, Swarm lifecycle policies, and resource profiles.")
+    lines.append("")
+    lines.append("Use the [ansible-docker-swarm-services](https://github.com/shackofnoreturn/ansible-docker-swarm-services) repository in Semaphore and use the playbook `playbook-stack-deploy.yml` to deploy this stack.")
+    lines.append("")
+    lines.append("### CLI")
+    lines.append("")
+    lines.append("After rendering `compose.yml` from `compose.yml.j2`, deploy it with:")
+    lines.append("")
+    lines.append("```bash")
+    lines.append(f"docker stack deploy --compose-file compose.yml {cfg.name}")
+    lines.append("```")
+    lines.append("")
+    lines.append("## Notes")
+    lines.append("")
+    lines.append("- TODO: Add stack-specific notes, environment differences, and operational considerations.")
+
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Template snippets (written once, never overwritten)
+# ---------------------------------------------------------------------------
+
+POLICY_TEMPLATES = {
+    "low": """\
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+        window: 5m
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+""",
+    "medium": """\
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 5m
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+""",
+    "high": """\
+      restart_policy:
+        condition: on-failure
+        delay: 15s
+        max_attempts: 5
+        window: 5m
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+""",
+}
+
+RESOURCE_TEMPLATES = {
+    "low": """\
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+""",
+    "medium": """\
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+""",
+    "high": """\
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+""",
+}
+
+LOGGING_TEMPLATE = """\
+    logging:
+      driver: json-file
+      options:
+        max-file: "10"
+        max-size: 2m
+"""
+
+TRAEFIK_LABEL_TEMPLATE = """\
+        - traefik.enable=true
+        - traefik.swarm.network=${NETWORK_TRAEFIK}
+        - traefik.http.routers.{{ service_name }}.rule=Host(`{{ service_name }}.${DOMAIN}`)
+        - traefik.http.routers.{{ service_name }}.entrypoints=websecure
+        - traefik.http.services.{{ service_name }}.loadbalancer.server.port=${{ service_env_prefix }}_PORT
+"""
+
+HOMEPAGE_LABEL_TEMPLATE = """\
+        - homepage.group=TODO
+        - homepage.name={{ service_display_name }}
+        - homepage.icon=TODO
+        - homepage.href=https://{{ service_name }}.${DOMAIN}
+        - homepage.description=TODO
+"""
+
+RUNTIME_CONFIG_MOUNT = """\
+      - ${PATH_DOCKER_DATA}/${env}/{{ stack_name }}/{{ service_name }}:/config
+"""
+
+HEALTHCHECK_HTTP = """\
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:${SERVICE_PORT}/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+"""
+
+
+def _write_if_missing(path: Path, content: str) -> None:
+    if not path.exists():
+        path.write_text(content, encoding="utf-8")
+
+
+def ensure_shared_templates(templates_dir: Path) -> None:
+    """Create shared Jinja template snippets under templates_dir if they don't exist."""
+    dirs = ["policies", "resources", "common", "labels", "placement", "healthchecks", "mounts"]
+    for d in dirs:
+        (templates_dir / d).mkdir(parents=True, exist_ok=True)
+
+    for profile, content in POLICY_TEMPLATES.items():
+        _write_if_missing(templates_dir / "policies" / f"{profile}.yml.j2", content)
+    for profile, content in RESOURCE_TEMPLATES.items():
+        _write_if_missing(templates_dir / "resources" / f"{profile}.yml.j2", content)
+
+    _write_if_missing(templates_dir / "common" / "logging.yml.j2", LOGGING_TEMPLATE)
+    _write_if_missing(templates_dir / "labels" / "traefik.yml.j2", TRAEFIK_LABEL_TEMPLATE)
+    _write_if_missing(templates_dir / "labels" / "homepage.yml.j2", HOMEPAGE_LABEL_TEMPLATE)
+    _write_if_missing(templates_dir / "mounts" / "runtime-config.yml.j2", RUNTIME_CONFIG_MOUNT)
+    _write_if_missing(templates_dir / "healthchecks" / "http.yml.j2", HEALTHCHECK_HTTP)
+    _write_if_missing(templates_dir / "placement" / "node-label.yml.j2",
+                      "        - node.role == manager\n        - node.labels.TODO == true\n")
+
+
+# ---------------------------------------------------------------------------
+# Jinja2 rendering for full compose.yml preview
+# ---------------------------------------------------------------------------
+
+def _builtin_template_map() -> dict[str, str]:
+    """Return built-in fallback contents keyed by path relative to templates/."""
+    mapping: dict[str, str] = {
+        "common/logging.yml.j2": LOGGING_TEMPLATE,
+        "labels/traefik.yml.j2": TRAEFIK_LABEL_TEMPLATE,
+        "labels/homepage.yml.j2": HOMEPAGE_LABEL_TEMPLATE,
+        "mounts/runtime-config.yml.j2": RUNTIME_CONFIG_MOUNT,
+        "healthchecks/http.yml.j2": HEALTHCHECK_HTTP,
+        "placement/node-label.yml.j2": "        - node.role == manager\n        - node.labels.TODO == true\n",
+    }
+    for profile, content in POLICY_TEMPLATES.items():
+        mapping[f"policies/{profile}.yml.j2"] = content
+    for profile, content in RESOURCE_TEMPLATES.items():
+        mapping[f"resources/{profile}.yml.j2"] = content
+    return mapping
+
+
+def render_compose_preview(cfg: StackConfig) -> str:
+    """
+    Render compose.yml.j2 through Jinja2, resolving `../../templates/...`
+    includes from cfg.templates_dir on disk (or built-in defaults if absent).
+    """
+    import jinja2
+
+    compose_source = generate_compose_j2(cfg)
+    builtins = _builtin_template_map()
+    templates_dir = cfg.templates_dir if cfg.stacks_root else None
+
+    class _StackTemplateLoader(jinja2.BaseLoader):
+        def get_source(self, environment, template: str):
+            rel = template
+            if rel.startswith("../../templates/"):
+                rel = rel[len("../../templates/"):]
+            elif rel.startswith("templates/"):
+                rel = rel[len("templates/"):]
+
+            if templates_dir is not None:
+                candidate = templates_dir / rel
+                if candidate.is_file():
+                    text = candidate.read_text(encoding="utf-8")
+                    return text, str(candidate), lambda: True
+
+            if rel in builtins:
+                return builtins[rel], f"builtin:{rel}", lambda: True
+
+            raise jinja2.TemplateNotFound(template)
+
+    env = jinja2.Environment(
+        loader=_StackTemplateLoader(),
+        keep_trailing_newline=True,
+        undefined=jinja2.ChainableUndefined,
+    )
+    tpl = env.from_string(compose_source)
+    return tpl.render(stack_name=cfg.name, env=cfg.environment)
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+class GenerationError(Exception):
+    pass
+
+
+def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
+    """
+    Write all stack files to disk. Returns a list of created/updated paths.
+    Raises GenerationError if the directory already exists and overwrite=False.
+    """
+    stack_dir = cfg.stack_dir
+    if stack_dir.exists() and not overwrite:
+        raise GenerationError(
+            f"Stack directory already exists: {stack_dir}\n"
+            "Enable overwrite to continue."
+        )
+
+    stack_dir.mkdir(parents=True, exist_ok=True)
+    (stack_dir / "configs").mkdir(exist_ok=True)
+    (stack_dir / "secrets").mkdir(exist_ok=True)
+    (stack_dir / "configs" / ".gitkeep").touch()
+    (stack_dir / "secrets" / ".gitkeep").touch()
+
+    ensure_shared_templates(cfg.templates_dir)
+
+    created = []
+
+    stack_yml_path = stack_dir / "stack.yml"
+    stack_yml_path.write_text(generate_stack_yml(cfg), encoding="utf-8")
+    created.append(str(stack_yml_path))
+
+    compose_path = stack_dir / "compose.yml.j2"
+    compose_path.write_text(generate_compose_j2(cfg), encoding="utf-8")
+    created.append(str(compose_path))
+
+    readme_path = stack_dir / "README.md"
+    readme_path.write_text(generate_readme(cfg), encoding="utf-8")
+    created.append(str(readme_path))
+
+    return created
