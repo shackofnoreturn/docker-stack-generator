@@ -4,6 +4,7 @@ No I/O side-effects on import; call generate_stack() to write files.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -70,6 +71,8 @@ class ServiceConfig:
         default_factory=lambda: PlacementConstraint(role="worker", label_key="")
     )
     """Single placement constraint (role + optional label)."""
+    environment: dict[str, str] = field(default_factory=dict)
+    """Explicit container environment variables, merged with the default TZ."""
 
 
 @dataclass
@@ -204,7 +207,9 @@ def generate_compose_j2(cfg: StackConfig) -> str:
         lines.append(f"    image: ${{{pfx}_IMAGE}}:${{{pfx}_VERSION}}")
         lines.append("")
         lines.append("    environment:")
-        lines.append("      TZ: ${TZ}")
+        environment = {"TZ": "${TZ}", **svc.environment}
+        for key, value in environment.items():
+            lines.append(f"      {json.dumps(key)}: {json.dumps(value)}")
         lines.append("")
         lines.append("{% include '../../templates/common/logging.yml.j2' %}")
         lines.append("")
@@ -715,3 +720,4 @@ def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
     created.append(str(readme_path))
 
     return created
+

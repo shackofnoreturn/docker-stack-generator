@@ -10,6 +10,8 @@ A Python GUI application to scaffold Docker Swarm stack files
 - **Persistent settings** — stacks root, environment, network variables, and profile defaults are saved across sessions
 - **Docker Hub search** — search images in-app with star counts and descriptions
 - **Automatic metadata** — fetches exposed ports, OS, architecture, image layers from Docker Hub without pulling images
+- **Service environment variables** — a separate Environment tab to add, edit, and remove key/value pairs, saved with each service and included in its Compose `environment` block
+- **Environment suggestions** — Fetch Metadata lists variables declared by the image with their defaults; selected suggestions can be added without overwriting existing values. Image metadata may not list every supported variable.
 - **Preview** — live `stack.yml` and `compose.yml.j2` preview before writing any files
 - **Recent stacks** — quick access to previously generated stacks
 - **Same output format** as the original `new-stack.sh`
@@ -82,7 +84,7 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
 
 # Todo
 
-- [ ] Per service ability in a seperate tab to add environment variables. If the information is available, list the available environment variables for that service. Needs to be added to the environment variables in the compose file.
+- [x] Per-service Environment tab with image-declared variable suggestions and Compose output.
 - [ ] Have a tab per service for the traefik labels and add these. "whoami" in this case needs to be swapped out with the service name. WHOAMI in the port variable needs to swapped with the service name in all caps.
 
         # ---------------------------------------------------------------------
@@ -111,3 +113,4 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
         - homepage.icon=mdi-account-question
         - homepage.href=https://whoami.${DOMAIN}
         - homepage.description=Traefik whoami test service
+

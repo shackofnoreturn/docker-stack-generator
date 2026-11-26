@@ -3,6 +3,7 @@ Service editor dialog – add or edit a single service within a stack.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer
@@ -13,6 +14,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,7 +26,10 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStatusBar,
+    QStyle,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -370,6 +375,119 @@ class _VolumeEditor(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Environment editor
+# ---------------------------------------------------------------------------
+
+class _EnvironmentEditor(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._table = QTableWidget(0, 2)
+        self._table.setHorizontalHeaderLabels(["Name", "Value"])
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.setAlternatingRowColors(True)
+        self._table.setToolTip("Explicit service variables. TZ defaults to ${TZ} unless overridden.")
+        layout.addWidget(self._table, 2)
+
+        buttons = QHBoxLayout()
+        add_button = QPushButton("Add variable")
+        add_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
+        add_button.clicked.connect(self._add_row)
+        buttons.addWidget(add_button)
+        remove_button = QPushButton("Remove selected")
+        remove_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogDiscardButton))
+        remove_button.clicked.connect(self._remove_rows)
+        buttons.addWidget(remove_button)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+
+        self._available_label = QLabel("Image-declared variables (metadata not fetched)")
+        layout.addWidget(self._available_label)
+        self._available = QListWidget()
+        self._available.setAlternatingRowColors(True)
+        self._available.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self._available.setToolTip(
+            "Variables declared by the image, not a complete list of supported options."
+        )
+        self._available.itemDoubleClicked.connect(lambda item: self._add_available())
+        layout.addWidget(self._available, 1)
+        self._use_button = QPushButton("Add selected variables")
+        self._use_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self._use_button.clicked.connect(self._add_available)
+        self._use_button.setEnabled(False)
+        layout.addWidget(self._use_button)
+        self._available.itemSelectionChanged.connect(
+            lambda: self._use_button.setEnabled(bool(self._available.selectedItems()))
+        )
+
+    def _append(self, name: str, value: str) -> int:
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+        self._table.setItem(row, 0, QTableWidgetItem(name))
+        self._table.setItem(row, 1, QTableWidgetItem(value))
+        return row
+
+    def _add_row(self):
+        row = self._append("", "")
+        self._table.setCurrentCell(row, 0)
+        self._table.editItem(self._table.item(row, 0))
+
+    def _remove_rows(self):
+        rows = {index.row() for index in self._table.selectedIndexes()}
+        for row in sorted(rows, reverse=True):
+            self._table.removeRow(row)
+
+    def _add_available(self):
+        names = {self._table.item(row, 0).text().strip() for row in range(self._table.rowCount())}
+        for item in self._available.selectedItems():
+            name, value = item.data(Qt.ItemDataRole.UserRole)
+            if name not in names:
+                self._append(name, value)
+                names.add(name)
+
+    def set_available(self, metadata: Optional[dict] = None):
+        self._available.clear()
+        self._use_button.setEnabled(False)
+        variables = {}
+        for entry in (metadata or {}).get("env", []):
+            name, separator, value = entry.partition("=")
+            if name and separator:
+                variables[name] = value
+        for name, value in variables.items():
+            item = QListWidgetItem(f"{name}={value}")
+            item.setData(Qt.ItemDataRole.UserRole, (name, value))
+            item.setToolTip(f"{name}={value}")
+            self._available.addItem(item)
+        if metadata is None:
+            status = "metadata not fetched"
+        elif variables:
+            status = str(len(variables))
+        else:
+            status = "none available"
+        self._available_label.setText(f"Image-declared variables ({status})")
+
+    def set_values(self, values: dict[str, str]):
+        self._table.setRowCount(0)
+        for name, value in values.items():
+            self._append(name, value)
+
+    def values(self) -> dict[str, str]:
+        variables = {}
+        for row in range(self._table.rowCount()):
+            name = self._table.item(row, 0).text().strip()
+            value = self._table.item(row, 1).text()
+            if not name and not value:
+                continue
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                raise ValueError(f"Invalid environment variable name in row {row + 1}: {name!r}")
+            if name in variables:
+                raise ValueError(f"Duplicate environment variable: {name}")
+            variables[name] = value
+        return variables
+
+
+# ---------------------------------------------------------------------------
 # Main dialog
 # ---------------------------------------------------------------------------
 
@@ -465,6 +583,8 @@ class ServiceDialog(QDialog):
         rv.addWidget(tabs, 1)
 
         tabs.addTab(self._build_basic_tab(), "⚙  Basic")
+        self._environment_editor = _EnvironmentEditor()
+        tabs.addTab(self._environment_editor, "Environment")
         tabs.addTab(self._build_networking_tab(), "🌐  Networking")
         tabs.addTab(self._build_secrets_tab(), "🔒  Secrets")
         tabs.addTab(self._build_volumes_tab(), "💾  Volumes")
@@ -749,6 +869,8 @@ class ServiceDialog(QDialog):
         self._restart_profile.set_value(svc.restart_profile)
         self._resource_profile.set_value(svc.resource_profile)
         self._metadata = svc.metadata
+        self._environment_editor.set_values(svc.environment)
+        self._environment_editor.set_available(svc.metadata or None)
 
         self._rdir_list.clear()
         for rd in (svc.runtime_dirs or []):
@@ -852,6 +974,8 @@ class ServiceDialog(QDialog):
     def _on_image_changed(self, text: str):
         self._port_combo.clear()
         self._meta_label.setText("")
+        self._metadata = {}
+        self._environment_editor.set_available()
 
     def _fetch_metadata(self):
         image = self._image_input.text().strip()
@@ -867,7 +991,10 @@ class ServiceDialog(QDialog):
 
     def _on_meta_done(self, meta: dict, ports: list[str]):
         self._fetch_btn.setEnabled(True)
+        if meta.get("image") != self._image_input.text().strip():
+            return
         self._metadata = meta
+        self._environment_editor.set_available(meta)
 
         self._port_combo.clear()
         for p in ports:
@@ -912,6 +1039,11 @@ class ServiceDialog(QDialog):
         if not image:
             QMessageBox.warning(self, "Validation", "Docker image cannot be empty.")
             return
+        try:
+            self._environment_editor.values()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Validation", str(exc))
+            return
         self.accept()
 
     def result_service(self) -> ServiceConfig:
@@ -955,4 +1087,6 @@ class ServiceDialog(QDialog):
             ports=self._ports_editor.values(),
             volumes=self._volumes_editor.values(),
             constraint=constraint,
+            environment=self._environment_editor.values(),
         )
+
