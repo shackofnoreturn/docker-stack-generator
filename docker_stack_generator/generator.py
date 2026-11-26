@@ -4,6 +4,8 @@ No I/O side-effects on import; call generate_stack() to write files.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 from dataclasses import dataclass, field
@@ -75,6 +77,9 @@ class ServiceConfig:
     """Explicit container environment variables, merged with the default TZ."""
     traefik: Optional[dict[str, str]] = None
     homepage: Optional[dict[str, str]] = None
+    config_files: dict[str, str] = field(default_factory=dict)
+    """Relative configuration paths mapped to base64-encoded file contents."""
+    config_directories: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -709,6 +714,63 @@ class GenerationError(Exception):
     pass
 
 
+def validate_service_configs(files: dict[str, str], directories: list[str]) -> dict[str, bytes]:
+    paths = [*files, *directories]
+    for path in paths:
+        parts = path.split("/")
+        if not path or any(
+            part in ("", ".", "..") or part.endswith((".", " "))
+            or re.search(r'[<>:"\\|?*\x00-\x1f]', part)
+            or re.fullmatch(r"(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", part)
+            for part in parts
+        ):
+            raise ValueError(f"Invalid configuration path: {path!r}. Use relative paths with forward slashes.")
+    file_names = {path.casefold() for path in files}
+    if len(file_names) != len(files):
+        raise ValueError("Configuration file paths must be unique, ignoring case.")
+    for path in paths:
+        parts = path.casefold().split("/")
+        for index in range(1, len(parts)):
+            if "/".join(parts[:index]) in file_names:
+                raise ValueError(f"Configuration file is also used as a directory: {path!r}")
+    if file_names.intersection(path.casefold() for path in directories):
+        raise ValueError("A configuration path cannot be both a file and a directory.")
+    decoded = {}
+    for path, contents in files.items():
+        try:
+            decoded[path] = base64.b64decode(contents, validate=True)
+        except (ValueError, binascii.Error, TypeError) as exc:
+            raise ValueError(f"Invalid configuration file contents: {path!r}") from exc
+    return decoded
+
+
+def _service_config_plan(cfg: StackConfig) -> tuple[list[Path], dict[Path, bytes]]:
+    directories = []
+    files = {}
+    for service in cfg.services:
+        if not service.config_files and not service.config_directories:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", service.name):
+            raise ValueError(f"Invalid configuration service name: {service.name!r}")
+        contents = validate_service_configs(service.config_files, service.config_directories)
+        root = cfg.stack_dir.resolve() / "configs" / service.name
+        service_directories = [root, *(root / path for path in service.config_directories)]
+        service_files = {root / path: data for path, data in contents.items()}
+        for target in [*service_directories, *service_files]:
+            if not target.resolve().is_relative_to(root):
+                raise ValueError(f"Configuration path escapes its service directory: {target}")
+            for parent in [target, *target.parents]:
+                if parent == cfg.stack_dir.resolve().parent:
+                    break
+                if parent.exists() and not parent.is_dir() and parent not in service_files:
+                    raise ValueError(f"Configuration directory is an existing file: {parent}")
+            if target in service_files and target.exists() and not target.is_file():
+                raise ValueError(f"Configuration file is an existing directory: {target}")
+        directories.extend(service_directories)
+        files.update(service_files)
+    return directories, files
+
+
 def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
     """
     Write all stack files to disk. Returns a list of created/updated paths.
@@ -721,6 +783,11 @@ def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
             "Enable overwrite to continue."
         )
 
+    try:
+        config_directories, config_files = _service_config_plan(cfg)
+    except ValueError as exc:
+        raise GenerationError(str(exc)) from exc
+
     stack_dir.mkdir(parents=True, exist_ok=True)
     (stack_dir / "configs").mkdir(exist_ok=True)
     secrets_dir = stack_dir / "secrets"
@@ -730,6 +797,18 @@ def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
     ensure_shared_templates(cfg.templates_dir)
 
     created = []
+
+    for directory in config_directories:
+        directory.mkdir(parents=True, exist_ok=True)
+    for path, contents in config_files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(contents)
+        created.append(str(path))
+    for directory in config_directories:
+        if not any(directory.iterdir()):
+            gitkeep = directory / ".gitkeep"
+            gitkeep.touch()
+            created.append(str(gitkeep))
 
     # Write secret stub files (one per unique secret, write-if-missing)
     all_secrets: list[str] = []

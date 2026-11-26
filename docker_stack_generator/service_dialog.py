@@ -3,6 +3,8 @@ Service editor dialog – add or edit a single service within a stack.
 """
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 import re
 from typing import Optional
 
@@ -12,10 +14,12 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -45,6 +49,7 @@ from docker_stack_generator.generator import (
     split_image,
     slugify,
     traefik_label_defaults,
+    validate_service_configs,
 )
 from docker_stack_generator.widgets import MetadataWorker, ProfileSelector, SearchWorker
 
@@ -493,6 +498,130 @@ class _EnvironmentEditor(QWidget):
 # Main dialog
 # ---------------------------------------------------------------------------
 
+class _ConfigFilesEditor(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        self._destination = QLabel("configs/<service>/")
+        layout.addWidget(self._destination)
+
+        folder_row = QFormLayout()
+        self._folder = QLineEdit()
+        self._folder.setPlaceholderText("dynamic")
+        self._folder.setToolTip("Relative folder for imported or new files; blank uses the service root.")
+        folder_row.addRow("Destination subdirectory:", self._folder)
+        layout.addLayout(folder_row)
+
+        buttons = QHBoxLayout()
+        for label, icon, callback in (
+            ("Import files", QStyle.StandardPixmap.SP_DialogOpenButton, self._import_files),
+            ("New file", QStyle.StandardPixmap.SP_FileIcon, self._new_file),
+            ("Remove", QStyle.StandardPixmap.SP_DialogDiscardButton, self._remove_file),
+        ):
+            button = QPushButton(label)
+            button.setIcon(self.style().standardIcon(icon))
+            button.clicked.connect(callback)
+            buttons.addWidget(button)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+
+        self._files = QListWidget()
+        self._files.setAlternatingRowColors(True)
+        self._files.setToolTip("Configuration paths relative to the service directory; double-click to rename.")
+        layout.addWidget(self._files, 1)
+        self._contents = QTextEdit()
+        self._contents.setAcceptRichText(False)
+        self._contents.setReadOnly(True)
+        self._contents.setToolTip("UTF-8 text contents. Imported binary files are preserved without editing.")
+        layout.addWidget(self._contents, 2)
+        self._files.currentItemChanged.connect(self._show_contents)
+        self._contents.textChanged.connect(self._update_contents)
+
+        directories = QGroupBox("Subdirectories")
+        directory_layout = QVBoxLayout(directories)
+        self._directories = _TagListEditor("e.g. dynamic or dynamic/middlewares", max_height=70)
+        directory_layout.addWidget(self._directories)
+        layout.addWidget(directories)
+
+    def _append(self, path: str, contents: str):
+        item = QListWidgetItem(path)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        item.setData(Qt.ItemDataRole.UserRole, contents)
+        self._files.addItem(item)
+        return item
+
+    def _add_file(self, name: str, contents: bytes):
+        folder = self._folder.text().strip()
+        path = f"{folder}/{name}" if folder else name
+        files = self.values()[0]
+        if path.casefold() in {entry.casefold() for entry in files}:
+            raise ValueError(f"Configuration file already exists: {path}")
+        encoded = base64.b64encode(contents).decode("ascii")
+        validate_service_configs({**files, path: encoded}, self._directories.values())
+        self._files.setCurrentItem(self._append(path, encoded))
+
+    def _import_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "Import Configuration Files")
+        for path in paths:
+            try:
+                self._add_file(Path(path).name, Path(path).read_bytes())
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Configuration File", str(exc))
+
+    def _new_file(self):
+        name, accepted = QInputDialog.getText(self, "New Configuration File", "Relative file path:")
+        if accepted and name:
+            try:
+                self._add_file(name, b"")
+            except ValueError as exc:
+                QMessageBox.warning(self, "Configuration File", str(exc))
+
+    def _remove_file(self):
+        row = self._files.currentRow()
+        if row >= 0:
+            self._files.takeItem(row)
+
+    def _show_contents(self, current, previous=None):
+        self._contents.blockSignals(True)
+        self._contents.clear()
+        self._contents.setReadOnly(True)
+        if current is not None:
+            contents = base64.b64decode(current.data(Qt.ItemDataRole.UserRole))
+            try:
+                text = contents.decode("utf-8")
+                if "\x00" in text:
+                    raise UnicodeError()
+                self._contents.setPlainText(text)
+                self._contents.setReadOnly(False)
+            except UnicodeError:
+                self._contents.setPlainText(f"Binary file ({len(contents):,} bytes)")
+        self._contents.blockSignals(False)
+
+    def _update_contents(self):
+        item = self._files.currentItem()
+        if item is not None and not self._contents.isReadOnly():
+            contents = self._contents.toPlainText().encode("utf-8")
+            item.setData(Qt.ItemDataRole.UserRole, base64.b64encode(contents).decode("ascii"))
+
+    def set_values(self, files: dict[str, str], directories: list[str]):
+        self._files.clear()
+        for path, contents in files.items():
+            self._append(path, contents)
+        self._directories.set_values(directories)
+
+    def values(self) -> tuple[dict[str, str], list[str]]:
+        files = {}
+        for row in range(self._files.count()):
+            item = self._files.item(row)
+            path = item.text()
+            if path in files:
+                raise ValueError(f"Duplicate configuration file: {path}")
+            files[path] = item.data(Qt.ItemDataRole.UserRole)
+        directories = self._directories.values()
+        validate_service_configs(files, directories)
+        return files, directories
+
+
 class _ServiceLabelsEditor(QWidget):
     def __init__(self, title: str, fields: dict[str, str], parent=None):
         super().__init__(parent)
@@ -625,6 +754,8 @@ class ServiceDialog(QDialog):
         tabs.addTab(self._build_networking_tab(), "🌐  Networking")
         tabs.addTab(self._build_secrets_tab(), "🔒  Secrets")
         tabs.addTab(self._build_volumes_tab(), "💾  Volumes")
+        self._configs_editor = _ConfigFilesEditor()
+        tabs.addTab(self._configs_editor, "Configurations")
         self._traefik_editor = _ServiceLabelsEditor("Traefik", {
             "network": "Swarm network:",
             "rule": "Router rule:",
@@ -920,6 +1051,7 @@ class ServiceDialog(QDialog):
     def _update_label_defaults(self):
         display_name = self._name_input.text().strip()
         name = slugify(display_name)
+        self._configs_editor._destination.setText(f"configs/{name or '<service>'}/")
         self._traefik_editor.set_defaults(traefik_label_defaults(name))
         self._homepage_editor.set_defaults(homepage_label_defaults(
             name, display_name, self._desc_input.text().strip()
@@ -937,6 +1069,7 @@ class ServiceDialog(QDialog):
         self._environment_editor.set_available(svc.metadata or None)
         self._traefik_editor.set_values(svc.traefik)
         self._homepage_editor.set_values(svc.homepage)
+        self._configs_editor.set_values(svc.config_files, svc.config_directories)
 
         self._rdir_list.clear()
         for rd in (svc.runtime_dirs or []):
@@ -1107,6 +1240,7 @@ class ServiceDialog(QDialog):
             return
         try:
             self._environment_editor.values()
+            self._configs_editor.values()
         except ValueError as exc:
             QMessageBox.warning(self, "Validation", str(exc))
             return
@@ -1134,6 +1268,7 @@ class ServiceDialog(QDialog):
             role="" if role_text == "(none)" else role_text,
             label_key=self._label_input.text().strip(),
         )
+        config_files, config_directories = self._configs_editor.values()
 
         return ServiceConfig(
             name=name,
@@ -1156,5 +1291,7 @@ class ServiceDialog(QDialog):
             environment=self._environment_editor.values(),
             traefik=self._traefik_editor.values(),
             homepage=self._homepage_editor.values(),
+            config_files=config_files,
+            config_directories=config_directories,
         )
 
