@@ -8,14 +8,19 @@ from __future__ import annotations
 import csv
 import io
 import json
-import shutil
 import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from docker_stack_generator.generator import ServiceConfig, StackConfig, slugify
+from docker_stack_generator.generator import (
+    PlacementConstraint,
+    PortMapping,
+    ServiceConfig,
+    StackConfig,
+    slugify,
+)
 
 _DEFAULT_LIBRARY_DIR = Path.home() / ".config" / "docker-stack-generator" / "library"
 
@@ -62,8 +67,23 @@ class SavedStack:
         raw_services = sdata.get("services", [])
         services = []
         for svc in raw_services:
+            # Backward-compat defaults for new fields
             svc.setdefault("runtime_dirs", [])
-            services.append(ServiceConfig(**svc))
+            svc.setdefault("networks", [])
+            svc.setdefault("secrets", [])
+            # ports: list of dicts → list of PortMapping
+            raw_ports = svc.pop("ports", [])
+            ports = [
+                PortMapping(**p) if isinstance(p, dict) else p
+                for p in raw_ports
+            ]
+            # constraint: dict → PlacementConstraint
+            raw_constraint = svc.pop("constraint", None)
+            if isinstance(raw_constraint, dict):
+                constraint = PlacementConstraint(**raw_constraint)
+            else:
+                constraint = PlacementConstraint(role="worker", label_key="")
+            services.append(ServiceConfig(**svc, ports=ports, constraint=constraint))
         cfg = StackConfig(
             name=sdata["name"],
             display_name=sdata.get("display_name", sdata["name"]),

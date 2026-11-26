@@ -3,7 +3,6 @@ Main application window.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
 import os
 from pathlib import Path
 from typing import Optional
@@ -573,7 +572,7 @@ class MainWindow(QMainWindow):
         self._description_input.setPlainText(getattr(cfg, "description", "") or "")
         self._description_input.blockSignals(False)
 
-        self._services = [ServiceConfig(**asdict(s)) for s in cfg.services]
+        self._services = list(cfg.services)
         self._refresh_services_list()
         self._update_preview_header(cfg.display_name)
 

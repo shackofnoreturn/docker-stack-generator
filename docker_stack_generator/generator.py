@@ -15,6 +15,22 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 @dataclass
+class PortMapping:
+    """A single published port entry (long-form Docker Compose syntax)."""
+    target: str        # container port, e.g. "80" or "${TRAEFIK_PORT}"
+    published: str     # host port, e.g. "80"
+    protocol: str = "tcp"   # tcp / udp
+    mode: str = "host"      # host / ingress
+
+
+@dataclass
+class PlacementConstraint:
+    """A single deploy.placement.constraints entry."""
+    role: str = "worker"       # "manager" or "worker"
+    label_key: str = ""        # e.g. "myapp"  → "node.labels.myapp == true"
+
+
+@dataclass
 class ServiceConfig:
     name: str                       # slugified
     display_name: str               # original user input
@@ -26,8 +42,19 @@ class ServiceConfig:
     port_source: str                # "image metadata" / "manual" / …
     restart_profile: str            # low / medium / high
     resource_profile: str           # low / medium / high
-    runtime_dirs: list[str] = field(default_factory=list)  # subdirs under stack/service/
+    runtime_dirs: list[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+    # --- new per-service fields ---
+    networks: list[str] = field(default_factory=list)
+    """Extra networks for this service (merged with stack defaults at render time)."""
+    secrets: list[str] = field(default_factory=list)
+    """Secret names (plain strings); written to secrets/ subdir and compose secrets: block."""
+    ports: list[PortMapping] = field(default_factory=list)
+    """Long-form port mappings."""
+    constraint: PlacementConstraint = field(
+        default_factory=lambda: PlacementConstraint(role="worker", label_key="")
+    )
+    """Single placement constraint (role + optional label)."""
 
 
 @dataclass
@@ -136,6 +163,20 @@ def generate_stack_yml(cfg: StackConfig) -> str:
 
 
 def generate_compose_j2(cfg: StackConfig) -> str:
+    # Collect all networks needed across all services
+    all_net_names: list[str] = list(cfg.networks)
+    for svc in cfg.services:
+        for n in (svc.networks or []):
+            if n not in all_net_names:
+                all_net_names.append(n)
+
+    # Collect all secrets across all services
+    all_secrets: list[str] = []
+    for svc in cfg.services:
+        for s in (svc.secrets or []):
+            if s not in all_secrets:
+                all_secrets.append(s)
+
     lines = [f"# Stack: {cfg.name}", "", "services:", ""]
     for svc in cfg.services:
         pfx = _env_prefix(svc.name)
@@ -155,22 +196,68 @@ def generate_compose_j2(cfg: StackConfig) -> str:
         lines.append(f"    # TODO: Add service-specific volumes and configuration here.")
         lines.append(f"    # TODO: Example: ${{PATH_DOCKER_DATA}}/${{env}}/{cfg.name}/{svc.name}:/config")
         lines.append("")
+
+        # Ports (long-form)
+        if svc.ports:
+            lines.append("    ports:")
+            for pm in svc.ports:
+                lines.append(f"      - target:    {pm.target}")
+                lines.append(f"        published: {pm.published}")
+                lines.append(f"        protocol:  {pm.protocol}")
+                lines.append(f"        mode:      {pm.mode}")
+                lines.append("")
+
+        # Secrets
+        if svc.secrets:
+            lines.append("    secrets:")
+            for s in svc.secrets:
+                lines.append(f"      - {s}")
+            lines.append("")
+
+        # Networks (merge stack defaults + service-specific)
+        svc_nets = list(cfg.networks)
+        for n in (svc.networks or []):
+            if n not in svc_nets:
+                svc_nets.append(n)
         lines.append("    networks:")
-        for net in cfg.networks:
+        for net in svc_nets:
             lines.append(f"      - {net}")
         lines.append("")
+
         lines.append("    deploy:")
         lines.append("      replicas: 1")
+
+        # Placement constraints
+        c = svc.constraint
+        if c and (c.role or c.label_key):
+            lines.append("      placement:")
+            lines.append("        constraints:")
+            if c.role:
+                lines.append(f"          - node.role == {c.role}")
+            if c.label_key:
+                lines.append(f"          - node.labels.{c.label_key} == true")
+            lines.append("")
+
         lines.append(f"{{% include '../../templates/policies/{svc.restart_profile}.yml.j2' %}}")
         lines.append(f"{{% include '../../templates/resources/{svc.resource_profile}.yml.j2' %}}")
         lines.append("")
 
+    # Bottom-level networks block
     lines.append("networks:")
-    for net_name, net_var in cfg.network_vars.items():
+    for net_name in all_net_names:
+        net_var = cfg.network_vars.get(net_name, net_name.upper().replace("-", "_"))
         lines.append(f"  {net_name}:")
         lines.append(f"    name: ${{{net_var}}}")
         lines.append("    external: true")
         lines.append("")
+
+    # Bottom-level secrets block
+    if all_secrets:
+        lines.append("secrets:")
+        for s in all_secrets:
+            lines.append(f"  {s}:")
+            lines.append("    external: true")
+            lines.append("")
 
     return "\n".join(lines)
 
@@ -554,13 +641,36 @@ def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
 
     stack_dir.mkdir(parents=True, exist_ok=True)
     (stack_dir / "configs").mkdir(exist_ok=True)
-    (stack_dir / "secrets").mkdir(exist_ok=True)
+    secrets_dir = stack_dir / "secrets"
+    secrets_dir.mkdir(exist_ok=True)
     (stack_dir / "configs" / ".gitkeep").touch()
-    (stack_dir / "secrets" / ".gitkeep").touch()
 
     ensure_shared_templates(cfg.templates_dir)
 
     created = []
+
+    # Write secret stub files (one per unique secret, write-if-missing)
+    all_secrets: list[str] = []
+    for svc in cfg.services:
+        for s in (svc.secrets or []):
+            if s not in all_secrets:
+                all_secrets.append(s)
+
+    for secret_name in all_secrets:
+        secret_path = secrets_dir / f"{secret_name}.txt"
+        if not secret_path.exists():
+            secret_path.write_text(
+                f"# Secret: {secret_name}\n"
+                f"# Replace this file with the actual secret value.\n"
+                f"# This file is referenced by the Docker Swarm secret '{secret_name}'.\n",
+                encoding="utf-8",
+            )
+            created.append(str(secret_path))
+
+    # Always ensure .gitkeep exists even when secrets were written
+    gitkeep = secrets_dir / ".gitkeep"
+    if not gitkeep.exists():
+        gitkeep.touch()
 
     stack_yml_path = stack_dir / "stack.yml"
     stack_yml_path.write_text(generate_stack_yml(cfg), encoding="utf-8")
