@@ -258,7 +258,16 @@ def generate_compose_j2(cfg: StackConfig) -> str:
             lines.append(f"      {json.dumps(key)}: {json.dumps(value)}")
         lines.append("")
         lines.append("{% include '../../templates/common/logging.yml.j2' %}")
-        lines.append("")
+
+        # Ports (long-form)
+        if svc.ports:
+            lines.append("    ports:")
+            for pm in svc.ports:
+                lines.append(f"      - target:    {pm.target}")
+                lines.append(f"        published: {pm.published}")
+                lines.append(f"        protocol:  {pm.protocol}")
+                lines.append(f"        mode:      {pm.mode}")
+                lines.append("")
 
         # Volumes / bind-mounts
         if svc.volumes:
@@ -275,16 +284,6 @@ def generate_compose_j2(cfg: StackConfig) -> str:
                     lines.append(
                         f"      - ${{PATH_DOCKER_DATA}}/${{env}}/{vm.host_path}:{vm.container_path}{ro_suffix}"
                     )
-
-        # Ports (long-form)
-        if svc.ports:
-            lines.append("    ports:")
-            for pm in svc.ports:
-                lines.append(f"      - target:    {pm.target}")
-                lines.append(f"        published: {pm.published}")
-                lines.append(f"        protocol:  {pm.protocol}")
-                lines.append(f"        mode:      {pm.mode}")
-                lines.append("")
 
         # Secrets
         if svc.secrets:
@@ -305,6 +304,8 @@ def generate_compose_j2(cfg: StackConfig) -> str:
 
         lines.append("    deploy:")
         lines.append("      replicas: 1")
+        lines.append("")
+        
         labels = service_labels(svc)
         if labels:
             lines.append("      labels:")
