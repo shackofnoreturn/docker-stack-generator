@@ -35,6 +35,7 @@ from docker_stack_generator.generator import (
     PlacementConstraint,
     PortMapping,
     ServiceConfig,
+    VolumeMount,
     split_image,
     slugify,
 )
@@ -209,6 +210,166 @@ class _PortTableEditor(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Volume / bind-mount editor
+# ---------------------------------------------------------------------------
+
+class _VolumeEditor(QWidget):
+    """
+    Editor for a list of VolumeMount objects.
+
+    Three kinds:
+      socket – literal bind  e.g. /var/run/docker.sock:/var/run/docker.sock:ro
+      config – static files  ${PATH_DOCKER_STACKS}/${env}/<host_subpath>:<ctr>:ro
+      data   – mutable data  ${PATH_DOCKER_DATA}/${env}/<host_subpath>:<ctr>
+    """
+
+    _KIND_LABELS = ["socket", "config", "data"]
+    _KIND_HINTS = {
+        "socket": "Literal bind — host path : container path",
+        "config": "Config bind — host subpath under ${PATH_DOCKER_STACKS}/${env}/",
+        "data":   "Data bind  — host subpath under ${PATH_DOCKER_DATA}/${env}/",
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # ── kind selector ──────────────────────────────────────────────
+        kind_row = QHBoxLayout()
+        kind_row.addWidget(QLabel("Kind:"))
+        self._kind_combo = QComboBox()
+        self._kind_combo.addItems(self._KIND_LABELS)
+        self._kind_combo.setMaximumWidth(90)
+        self._kind_combo.currentTextChanged.connect(self._on_kind_changed)
+        kind_row.addWidget(self._kind_combo)
+
+        self._kind_hint = QLabel()
+        self._kind_hint.setStyleSheet("color: #666; font-size: 11px;")
+        kind_row.addWidget(self._kind_hint, 1)
+        layout.addLayout(kind_row)
+
+        # ── host path / subpath ────────────────────────────────────────
+        host_row = QHBoxLayout()
+        self._host_label = QLabel("Host path:")
+        self._host_label.setMinimumWidth(90)
+        host_row.addWidget(self._host_label)
+        self._host_in = QLineEdit()
+        self._host_in.setPlaceholderText("/var/run/docker.sock")
+        host_row.addWidget(self._host_in, 1)
+        layout.addLayout(host_row)
+
+        # ── container path ─────────────────────────────────────────────
+        ctr_row = QHBoxLayout()
+        ctr_row.addWidget(QLabel("Container path:"))
+        self._ctr_in = QLineEdit()
+        self._ctr_in.setPlaceholderText("/var/run/docker.sock")
+        ctr_row.addWidget(self._ctr_in, 1)
+        layout.addLayout(ctr_row)
+
+        # ── read-only + buttons ────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        self._ro_check = QCheckBox("Read-only (:ro)")
+        self._ro_check.setChecked(True)
+        btn_row.addWidget(self._ro_check)
+        btn_row.addStretch()
+
+        add_btn = QPushButton("＋ Add volume")
+        add_btn.clicked.connect(self._add)
+        btn_row.addWidget(add_btn)
+
+        rm_btn = QPushButton("✕ Remove")
+        rm_btn.clicked.connect(self._remove)
+        btn_row.addWidget(rm_btn)
+        layout.addLayout(btn_row)
+
+        # ── list display ───────────────────────────────────────────────
+        self._list = QListWidget()
+        self._list.setMaximumHeight(110)
+        self._list.setAlternatingRowColors(True)
+        self._list.itemClicked.connect(self._on_item_clicked)
+        layout.addWidget(self._list)
+
+        self._on_kind_changed(self._kind_combo.currentText())
+
+    # ------------------------------------------------------------------
+
+    def _on_kind_changed(self, kind: str):
+        self._kind_hint.setText(self._KIND_HINTS.get(kind, ""))
+        if kind == "socket":
+            self._host_label.setText("Host path:")
+            self._host_in.setPlaceholderText("/var/run/docker.sock")
+            self._ctr_in.setPlaceholderText("/var/run/docker.sock")
+        elif kind == "config":
+            self._host_label.setText("Host subpath\n(after …/${env}/):")
+            self._host_in.setPlaceholderText(
+                "traefik/configs/traefik  →  ${PATH_DOCKER_STACKS}/${env}/traefik/configs/traefik"
+            )
+            self._ctr_in.setPlaceholderText("/etc/traefik")
+        else:  # data
+            self._host_label.setText("Host subpath\n(after …/${env}/):")
+            self._host_in.setPlaceholderText(
+                "traefik/traefik/acme  →  ${PATH_DOCKER_DATA}/${env}/traefik/traefik/acme"
+            )
+            self._ctr_in.setPlaceholderText("/acme")
+
+    def _vm_label(self, vm: VolumeMount) -> str:
+        ro = ":ro" if vm.read_only else ""
+        if vm.kind == "socket":
+            return f"[socket]  {vm.host_path}:{vm.container_path}{ro}"
+        elif vm.kind == "config":
+            return f"[config]  …/${{env}}/{vm.host_path}:{vm.container_path}{ro}"
+        else:
+            return f"[data]    …/${{env}}/{vm.host_path}:{vm.container_path}{ro}"
+
+    def _add(self):
+        host = self._host_in.text().strip().strip("/")
+        ctr = self._ctr_in.text().strip()
+        if not host or not ctr:
+            return
+        # socket: preserve leading slash
+        if self._kind_combo.currentText() == "socket" and not host.startswith("/"):
+            host = "/" + host
+        vm = VolumeMount(
+            kind=self._kind_combo.currentText(),
+            host_path=host,
+            container_path=ctr,
+            read_only=self._ro_check.isChecked(),
+        )
+        item = QListWidgetItem(self._vm_label(vm))
+        item.setData(Qt.ItemDataRole.UserRole, vm)
+        self._list.addItem(item)
+        self._host_in.clear()
+        self._ctr_in.clear()
+
+    def _remove(self):
+        row = self._list.currentRow()
+        if row >= 0:
+            self._list.takeItem(row)
+
+    def _on_item_clicked(self, item: QListWidgetItem):
+        vm: VolumeMount = item.data(Qt.ItemDataRole.UserRole)
+        self._kind_combo.setCurrentText(vm.kind)
+        self._host_in.setText(vm.host_path)
+        self._ctr_in.setText(vm.container_path)
+        self._ro_check.setChecked(vm.read_only)
+
+    def values(self) -> list[VolumeMount]:
+        return [
+            self._list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self._list.count())
+        ]
+
+    def set_values(self, volumes: list[VolumeMount]) -> None:
+        self._list.clear()
+        for vm in volumes:
+            item = QListWidgetItem(self._vm_label(vm))
+            item.setData(Qt.ItemDataRole.UserRole, vm)
+            self._list.addItem(item)
+
+
+# ---------------------------------------------------------------------------
 # Main dialog
 # ---------------------------------------------------------------------------
 
@@ -305,6 +466,8 @@ class ServiceDialog(QDialog):
 
         tabs.addTab(self._build_basic_tab(), "⚙  Basic")
         tabs.addTab(self._build_networking_tab(), "🌐  Networking")
+        tabs.addTab(self._build_secrets_tab(), "🔒  Secrets")
+        tabs.addTab(self._build_volumes_tab(), "💾  Volumes")
         tabs.addTab(self._build_deploy_tab(), "🚀  Deployment")
 
         self._meta_label = QLabel("No metadata fetched yet.")
@@ -443,7 +606,30 @@ class ServiceDialog(QDialog):
         nl.addWidget(self._networks_editor)
         layout.addWidget(nets_group)
 
-        # Secrets
+        # Ports
+        ports_group = QGroupBox("Published Ports (long-form)")
+        ports_group.setToolTip(
+            "Long-form port mappings written directly into the compose file.\n"
+            "Target = container port, Published = host port."
+        )
+        pl = QVBoxLayout(ports_group)
+        self._ports_editor = _PortTableEditor()
+        pl.addWidget(self._ports_editor)
+        layout.addWidget(ports_group)
+
+        layout.addStretch()
+        return tab
+
+    # ------------------------------------------------------------------
+    # Tab: Secrets
+    # ------------------------------------------------------------------
+
+    def _build_secrets_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
         secrets_group = QGroupBox("Secrets")
         secrets_group.setToolTip(
             "Docker Swarm secrets to mount into this service.\n"
@@ -459,20 +645,42 @@ class ServiceDialog(QDialog):
         secrets_hint.setWordWrap(True)
         secrets_hint.setStyleSheet("color: #666; font-size: 11px;")
         sl.addWidget(secrets_hint)
-        self._secrets_editor = _TagListEditor(placeholder="e.g. cloudflare_api_token", max_height=70)
+        self._secrets_editor = _TagListEditor(placeholder="e.g. cloudflare_api_token", max_height=120)
         sl.addWidget(self._secrets_editor)
         layout.addWidget(secrets_group)
 
-        # Ports
-        ports_group = QGroupBox("Published Ports (long-form)")
-        ports_group.setToolTip(
-            "Long-form port mappings written directly into the compose file.\n"
-            "Target = container port, Published = host port."
+        layout.addStretch()
+        return tab
+
+    # ------------------------------------------------------------------
+    # Tab: Volumes
+    # ------------------------------------------------------------------
+
+    def _build_volumes_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
+        vols_group = QGroupBox("Volumes / Bind-mounts")
+        vols_group.setToolTip(
+            "Three kinds:\n"
+            "  socket – literal bind  (/var/run/docker.sock:/var/run/docker.sock:ro)\n"
+            "  config – static files  (${PATH_DOCKER_STACKS}/${env}/<subpath>:<ctr>:ro)\n"
+            "  data   – mutable data  (${PATH_DOCKER_DATA}/${env}/<subpath>:<ctr>)"
         )
-        pl = QVBoxLayout(ports_group)
-        self._ports_editor = _PortTableEditor()
-        pl.addWidget(self._ports_editor)
-        layout.addWidget(ports_group)
+        vl = QVBoxLayout(vols_group)
+        vols_hint = QLabel(
+            "<i>Select <b>socket</b> for special host paths (e.g. docker.sock), "
+            "<b>config</b> for read-only config files under <code>PATH_DOCKER_STACKS</code>, "
+            "or <b>data</b> for mutable data under <code>PATH_DOCKER_DATA</code>.</i>"
+        )
+        vols_hint.setWordWrap(True)
+        vols_hint.setStyleSheet("color: #666; font-size: 11px;")
+        vl.addWidget(vols_hint)
+        self._volumes_editor = _VolumeEditor()
+        vl.addWidget(self._volumes_editor)
+        layout.addWidget(vols_group)
 
         layout.addStretch()
         return tab
@@ -549,6 +757,7 @@ class ServiceDialog(QDialog):
         self._networks_editor.set_values(svc.networks or [])
         self._secrets_editor.set_values(svc.secrets or [])
         self._ports_editor.set_values(svc.ports or [])
+        self._volumes_editor.set_values(svc.volumes or [])
 
         # Constraint
         c = svc.constraint
@@ -744,5 +953,6 @@ class ServiceDialog(QDialog):
             networks=self._networks_editor.values(),
             secrets=self._secrets_editor.values(),
             ports=self._ports_editor.values(),
+            volumes=self._volumes_editor.values(),
             constraint=constraint,
         )

@@ -19,6 +19,7 @@ from docker_stack_generator.generator import (
     PortMapping,
     ServiceConfig,
     StackConfig,
+    VolumeMount,
     slugify,
 )
 
@@ -77,13 +78,19 @@ class SavedStack:
                 PortMapping(**p) if isinstance(p, dict) else p
                 for p in raw_ports
             ]
+            # volumes: list of dicts → list of VolumeMount
+            raw_volumes = svc.pop("volumes", [])
+            volumes = [
+                VolumeMount(**v) if isinstance(v, dict) else v
+                for v in raw_volumes
+            ]
             # constraint: dict → PlacementConstraint
             raw_constraint = svc.pop("constraint", None)
             if isinstance(raw_constraint, dict):
                 constraint = PlacementConstraint(**raw_constraint)
             else:
                 constraint = PlacementConstraint(role="worker", label_key="")
-            services.append(ServiceConfig(**svc, ports=ports, constraint=constraint))
+            services.append(ServiceConfig(**svc, ports=ports, volumes=volumes, constraint=constraint))
         cfg = StackConfig(
             name=sdata["name"],
             display_name=sdata.get("display_name", sdata["name"]),

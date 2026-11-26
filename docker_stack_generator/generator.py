@@ -24,6 +24,19 @@ class PortMapping:
 
 
 @dataclass
+class VolumeMount:
+    """A single volume/bind-mount entry for a service."""
+    # kind: "socket" | "config" | "data"
+    #   socket → literal host_path:container_path[:options]
+    #   config → ${PATH_DOCKER_STACKS}/${env}/<host_subpath>:<container_path>[:ro]
+    #   data   → ${PATH_DOCKER_DATA}/${env}/<host_subpath>:<container_path>
+    kind: str           # "socket" | "config" | "data"
+    host_path: str      # literal path (socket) or subpath under base var (config/data)
+    container_path: str # path inside the container
+    read_only: bool = True  # :ro suffix for socket/config; data defaults to False but user can set
+
+
+@dataclass
 class PlacementConstraint:
     """A single deploy.placement.constraints entry."""
     role: str = "worker"       # "manager" or "worker"
@@ -51,6 +64,8 @@ class ServiceConfig:
     """Secret names (plain strings); written to secrets/ subdir and compose secrets: block."""
     ports: list[PortMapping] = field(default_factory=list)
     """Long-form port mappings."""
+    volumes: list[VolumeMount] = field(default_factory=list)
+    """Volume / bind-mount entries (socket, config, data)."""
     constraint: PlacementConstraint = field(
         default_factory=lambda: PlacementConstraint(role="worker", label_key="")
     )
@@ -193,9 +208,27 @@ def generate_compose_j2(cfg: StackConfig) -> str:
         lines.append("")
         lines.append("{% include '../../templates/common/logging.yml.j2' %}")
         lines.append("")
-        lines.append(f"    # TODO: Add service-specific volumes and configuration here.")
-        lines.append(f"    # TODO: Example: ${{PATH_DOCKER_DATA}}/${{env}}/{cfg.name}/{svc.name}:/config")
-        lines.append("")
+
+        # Volumes / bind-mounts
+        if svc.volumes:
+            lines.append("    volumes:")
+            for vm in svc.volumes:
+                ro_suffix = ":ro" if vm.read_only else ""
+                if vm.kind == "socket":
+                    lines.append(f"      - {vm.host_path}:{vm.container_path}{ro_suffix}")
+                elif vm.kind == "config":
+                    lines.append(
+                        f"      - ${{PATH_DOCKER_STACKS}}/${{{{env}}}}/{vm.host_path}:{vm.container_path}{ro_suffix}"
+                    )
+                else:  # data
+                    lines.append(
+                        f"      - ${{PATH_DOCKER_DATA}}/${{{{env}}}}/{vm.host_path}:{vm.container_path}{ro_suffix}"
+                    )
+            lines.append("")
+        else:
+            lines.append(f"    # TODO: Add service-specific volumes and configuration here.")
+            lines.append(f"    # TODO: Example: ${{PATH_DOCKER_DATA}}/${{{{env}}}}/{cfg.name}/{svc.name}:/config")
+            lines.append("")
 
         # Ports (long-form)
         if svc.ports:
