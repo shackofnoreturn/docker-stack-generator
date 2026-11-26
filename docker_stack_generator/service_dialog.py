@@ -41,8 +41,10 @@ from docker_stack_generator.generator import (
     PortMapping,
     ServiceConfig,
     VolumeMount,
+    homepage_label_defaults,
     split_image,
     slugify,
+    traefik_label_defaults,
 )
 from docker_stack_generator.widgets import MetadataWorker, ProfileSelector, SearchWorker
 
@@ -491,6 +493,40 @@ class _EnvironmentEditor(QWidget):
 # Main dialog
 # ---------------------------------------------------------------------------
 
+class _ServiceLabelsEditor(QWidget):
+    def __init__(self, title: str, fields: dict[str, str], parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        self._enabled = QCheckBox(f"Enable {title} labels")
+        layout.addWidget(self._enabled)
+        form_widget = QWidget()
+        form = QFormLayout(form_widget)
+        self._fields = {}
+        for key, label in fields.items():
+            editor = QLineEdit()
+            editor.setToolTip("Leave blank to use the service default shown in this field.")
+            self._fields[key] = editor
+            form.addRow(label, editor)
+        form_widget.setEnabled(False)
+        self._enabled.toggled.connect(form_widget.setEnabled)
+        layout.addWidget(form_widget)
+        layout.addStretch()
+
+    def set_defaults(self, defaults: dict[str, str]):
+        for key, value in defaults.items():
+            self._fields[key].setPlaceholderText(value)
+
+    def set_values(self, values: Optional[dict[str, str]]):
+        self._enabled.setChecked(values is not None)
+        for key, editor in self._fields.items():
+            editor.setText((values or {}).get(key, ""))
+
+    def values(self) -> Optional[dict[str, str]]:
+        if not self._enabled.isChecked():
+            return None
+        return {key: editor.text() for key, editor in self._fields.items() if editor.text()}
+
+
 class ServiceDialog(QDialog):
     """
     Modal dialog to configure a single service.
@@ -580,6 +616,7 @@ class ServiceDialog(QDialog):
 
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
+        tabs.setUsesScrollButtons(True)
         rv.addWidget(tabs, 1)
 
         tabs.addTab(self._build_basic_tab(), "⚙  Basic")
@@ -588,6 +625,25 @@ class ServiceDialog(QDialog):
         tabs.addTab(self._build_networking_tab(), "🌐  Networking")
         tabs.addTab(self._build_secrets_tab(), "🔒  Secrets")
         tabs.addTab(self._build_volumes_tab(), "💾  Volumes")
+        self._traefik_editor = _ServiceLabelsEditor("Traefik", {
+            "network": "Swarm network:",
+            "rule": "Router rule:",
+            "entrypoints": "Entrypoints:",
+            "service": "Traefik service:",
+            "port": "Backend port:",
+        })
+        tabs.addTab(self._traefik_editor, "Traefik")
+        self._homepage_editor = _ServiceLabelsEditor("Homepage", {
+            "group": "Group:",
+            "name": "Name:",
+            "icon": "Icon:",
+            "href": "URL:",
+            "description": "Description:",
+        })
+        tabs.addTab(self._homepage_editor, "Homepage")
+        self._name_input.textChanged.connect(self._update_label_defaults)
+        self._desc_input.textChanged.connect(self._update_label_defaults)
+        self._update_label_defaults()
         tabs.addTab(self._build_deploy_tab(), "🚀  Deployment")
 
         self._meta_label = QLabel("No metadata fetched yet.")
@@ -861,6 +917,14 @@ class ServiceDialog(QDialog):
     # Populate existing data
     # ------------------------------------------------------------------
 
+    def _update_label_defaults(self):
+        display_name = self._name_input.text().strip()
+        name = slugify(display_name)
+        self._traefik_editor.set_defaults(traefik_label_defaults(name))
+        self._homepage_editor.set_defaults(homepage_label_defaults(
+            name, display_name, self._desc_input.text().strip()
+        ))
+
     def _populate(self, svc: ServiceConfig):
         self._name_input.setText(svc.display_name)
         self._image_input.setText(svc.image)
@@ -871,6 +935,8 @@ class ServiceDialog(QDialog):
         self._metadata = svc.metadata
         self._environment_editor.set_values(svc.environment)
         self._environment_editor.set_available(svc.metadata or None)
+        self._traefik_editor.set_values(svc.traefik)
+        self._homepage_editor.set_values(svc.homepage)
 
         self._rdir_list.clear()
         for rd in (svc.runtime_dirs or []):
@@ -1088,5 +1154,7 @@ class ServiceDialog(QDialog):
             volumes=self._volumes_editor.values(),
             constraint=constraint,
             environment=self._environment_editor.values(),
+            traefik=self._traefik_editor.values(),
+            homepage=self._homepage_editor.values(),
         )
 

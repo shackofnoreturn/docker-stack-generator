@@ -73,6 +73,8 @@ class ServiceConfig:
     """Single placement constraint (role + optional label)."""
     environment: dict[str, str] = field(default_factory=dict)
     """Explicit container environment variables, merged with the default TZ."""
+    traefik: Optional[dict[str, str]] = None
+    homepage: Optional[dict[str, str]] = None
 
 
 @dataclass
@@ -126,6 +128,45 @@ def split_image(image: str) -> tuple[str, str]:
 
 def _env_prefix(service_name: str) -> str:
     return service_name.upper().replace("-", "_")
+
+
+def traefik_label_defaults(name: str) -> dict[str, str]:
+    return {
+        "network": "${NETWORK_TRAEFIK}",
+        "rule": f"Host(`{name}.${{DOMAIN}}`)",
+        "entrypoints": "websecure",
+        "service": name,
+        "port": f"${{{_env_prefix(name)}_PORT}}",
+    }
+
+
+def homepage_label_defaults(name: str, display_name: str, description: str) -> dict[str, str]:
+    return {
+        "group": "Infrastructure",
+        "name": display_name or name,
+        "icon": name,
+        "href": f"https://{name}.${{DOMAIN}}",
+        "description": description,
+    }
+
+
+def service_labels(svc: ServiceConfig) -> dict[str, str]:
+    labels = {}
+    if svc.traefik is not None:
+        values = {**traefik_label_defaults(svc.name), **svc.traefik}
+        labels.update({
+            "traefik.enable": "true",
+            "traefik.swarm.network": values["network"],
+            f"traefik.http.routers.{svc.name}.rule": values["rule"],
+            f"traefik.http.routers.{svc.name}.entrypoints": values["entrypoints"],
+            f"traefik.http.routers.{svc.name}.service": values["service"],
+            f"traefik.http.services.{values['service']}.loadbalancer.server.port": values["port"],
+        })
+    if svc.homepage is not None:
+        values = {**homepage_label_defaults(svc.name, svc.display_name, svc.description), **svc.homepage}
+        for key in ("group", "name", "icon", "href", "description"):
+            labels[f"homepage.{key}"] = values[key]
+    return labels
 
 
 def generate_stack_yml(cfg: StackConfig) -> str:
@@ -259,6 +300,12 @@ def generate_compose_j2(cfg: StackConfig) -> str:
 
         lines.append("    deploy:")
         lines.append("      replicas: 1")
+        labels = service_labels(svc)
+        if labels:
+            lines.append("      labels:")
+            for key, value in labels.items():
+                lines.append(f"        - {json.dumps(f'{key}={value}')}")
+            lines.append("")
 
         # Placement constraints
         c = svc.constraint

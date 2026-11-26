@@ -12,6 +12,8 @@ A Python GUI application to scaffold Docker Swarm stack files
 - **Automatic metadata** — fetches exposed ports, OS, architecture, image layers from Docker Hub without pulling images
 - **Service environment variables** — a separate Environment tab to add, edit, and remove key/value pairs, saved with each service and included in its Compose `environment` block
 - **Environment suggestions** — Fetch Metadata lists variables declared by the image with their defaults; selected suggestions can be added without overwriting existing values. Image metadata may not list every supported variable.
+- **Traefik labels** — per-service tab with service-based router, hostname, backend port variable, and editable routing settings
+- **Homepage labels** — per-service tab with customizable group, name, icon, URL, and description
 - **Preview** — live `stack.yml` and `compose.yml.j2` preview before writing any files
 - **Recent stacks** — quick access to previously generated stacks
 - **Same output format** as the original `new-stack.sh`
@@ -61,6 +63,26 @@ Settings are stored in `~/.config/docker-stack-generator/settings.json`. Open **
 - **Default profiles** — restart and resource profile defaults
 - **Network variable names** — `NETWORK_TRAEFIK`, `NETWORK_MONITORING`
 
+## Service Labels
+
+Open a service's **Traefik** or **Homepage** tab and select **Enable Traefik labels**
+or **Enable Homepage labels**. Each set is optional and disabled by default, including
+when opening older saved stacks. Labels are written under the service's `deploy.labels`
+in `compose.yml.j2` and the rendered Compose preview, as required for Docker Swarm.
+
+Blank fields use the displayed defaults and follow changes to the service name or
+description. Enter a value to override a default; clear it to restore automatic values.
+Settings are retained when saving and reopening a stack.
+
+- **Traefik:** enabled routing, network `${NETWORK_TRAEFIK}`, rule
+        ``Host(`<service>.${DOMAIN}`)``, entrypoint `websecure`, backend service `<service>`,
+        and backend port `${<SERVICE>_PORT}` using the uppercase service identifier.
+- **Homepage:** group `Infrastructure`, service display name, service identifier as
+        the icon, URL `https://<service>.${DOMAIN}`, and the service description.
+
+The Traefik network must also be attached to the service in the stack's networks or
+the service's Networking tab; changing a label does not attach a network.
+
 ## Generated Output
 
 
@@ -85,7 +107,7 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
 # Todo
 
 - [x] Per-service Environment tab with image-declared variable suggestions and Compose output.
-- [ ] Have a tab per service for the traefik labels and add these. "whoami" in this case needs to be swapped out with the service name. WHOAMI in the port variable needs to swapped with the service name in all caps.
+- [x] Per-service Traefik tab with service-based router labels and uppercase port variable.
 
         # ---------------------------------------------------------------------
         # Traefik
@@ -102,7 +124,7 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
         # Port
         - traefik.http.services.whoami.loadbalancer.server.port=${WHOAMI_PORT}
 
-- [ ] Add a tab per service for the Homepage labels. Group is custumizable. Name is the service name by default. Icon is the servicename by default. href needs whoami to be replaced by the service name. And add the service description at the description.
+- [x] Per-service Homepage tab with customizable group, service-based name, icon, URL, and description.
 
         # ---------------------------------------------------------------------
         # Homepage
