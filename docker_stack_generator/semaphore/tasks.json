@@ -1,0 +1,209 @@
+
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "stackName",
+      "type": "pickString",
+      "description": "Select the stack name",
+      "options": [
+        "traefik",
+        "monitoring",
+        "downloads",
+        "files",
+        "arr-media",
+        "stash",
+        "searxng"
+      ],
+      "default": "traefik"
+    },
+    {
+      "id": "semaphoreUser",
+      "type": "promptString",
+      "description": "Semaphore username"
+    },
+    {
+      "id": "semaphorePassword",
+      "type": "promptString",
+      "description": "Semaphore password",
+      "password": true
+    }
+  ],
+  "tasks": [
+
+    {
+      "label": "Docker: Create New Stack (Development)",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "scripts/new-stack.sh",
+        "stacks/development"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+
+    {
+      "label": "Promote stack: Development to Testing",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        {
+          "value": "set -euo pipefail; stack=\"$1\"; if [[ ! \"$stack\" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then echo \"Invalid stack name: $stack\"; exit 2; fi; source=\"stacks/development/$stack\"; destination=\"stacks/testing/$stack\"; if [[ ! -d \"$source\" ]]; then echo \"Development stack not found: $stack\"; exit 2; fi; mkdir -p \"$destination\"; rsync -av --itemize-changes --exclude=/stack.yml --exclude=/secrets/ --exclude=\"*override*.yml\" --exclude=\"*override*.yaml\" \"$source/\" \"$destination/\"",
+          "quoting": "strong"
+        },
+        "promote-stack",
+        "${input:stackName}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Promote stack: Testing to Production",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        {
+          "value": "set -euo pipefail; stack=\"$1\"; if [[ ! \"$stack\" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then echo \"Invalid stack name: $stack\"; exit 2; fi; source=\"stacks/testing/$stack\"; destination=\"stacks/production/$stack\"; if [[ ! -d \"$source\" ]]; then echo \"Testing stack not found: $stack\"; exit 2; fi; mkdir -p \"$destination\"; rsync -av --itemize-changes --exclude=/stack.yml --exclude=/secrets/ --exclude=\"*override*.yml\" --exclude=\"*override*.yaml\" \"$source/\" \"$destination/\"",
+          "quoting": "strong"
+        },
+        "promote-stack",
+        "${input:stackName}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Promote stack: Testing to Management",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        {
+          "value": "set -euo pipefail; stack=\"$1\"; if [[ ! \"$stack\" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then echo \"Invalid stack name: $stack\"; exit 2; fi; source=\"stacks/testing/$stack\"; destination=\"stacks/management/$stack\"; if [[ ! -d \"$source\" ]]; then echo \"Testing stack not found: $stack\"; exit 2; fi; mkdir -p \"$destination\"; rsync -av --itemize-changes --exclude=/stack.yml --exclude=/secrets/ --exclude=\"*override*.yml\" --exclude=\"*override*.yaml\" \"$source/\" \"$destination/\"",
+          "quoting": "strong"
+        },
+        "promote-stack",
+        "${input:stackName}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Semaphore: Deploy Stack (Development)",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        {
+          "value": "SEMAPHORE_URL='http://10.0.0.23:3000' SEMAPHORE_USER=\"$1\" SEMAPHORE_PASS=\"$2\" SEMAPHORE_STACK_NAME=\"$3\" bash scripts/semaphore-run.sh 1 41",
+          "quoting": "strong"
+        },
+        "semaphore-run",
+        "${input:semaphoreUser}",
+        "${input:semaphorePassword}",
+        "${input:stackName}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Semaphore: Deploy Stack (Testing)",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        {
+          "value": "SEMAPHORE_URL='http://10.0.0.23:3000' SEMAPHORE_USER=\"$1\" SEMAPHORE_PASS=\"$2\" SEMAPHORE_STACK_NAME=\"$3\" bash scripts/semaphore-run.sh 1 42",
+          "quoting": "strong"
+        },
+        "semaphore-run",
+        "${input:semaphoreUser}",
+        "${input:semaphorePassword}",
+        "${input:stackName}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Semaphore: Deploy Stack (Production)",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        {
+          "value": "SEMAPHORE_URL='http://10.0.0.23:3000' SEMAPHORE_USER=\"$1\" SEMAPHORE_PASS=\"$2\" SEMAPHORE_STACK_NAME=\"$3\" bash scripts/semaphore-run.sh 1 43",
+          "quoting": "strong"
+        },
+        "semaphore-run",
+        "${input:semaphoreUser}",
+        "${input:semaphorePassword}",
+        "${input:stackName}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Semaphore: Deploy Stack (Management)",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        {
+          "value": "SEMAPHORE_URL='http://10.0.0.23:3000' SEMAPHORE_USER=\"$1\" SEMAPHORE_PASS=\"$2\" SEMAPHORE_STACK_NAME=\"$3\" bash scripts/semaphore-run.sh 1 44",
+          "quoting": "strong"
+        },
+        "semaphore-run",
+        "${input:semaphoreUser}",
+        "${input:semaphorePassword}",
+        "${input:stackName}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}
