@@ -14,6 +14,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 - **Environment suggestions** — Fetch Metadata lists variables declared by the image with their defaults; selected suggestions can be added without overwriting existing values. Image metadata may not list every supported variable.
 - **Traefik labels** — per-service tab with service-based router, hostname, backend port variable, and editable routing settings
 - **Homepage labels** — per-service tab with customizable group, name, icon, URL, and description
+- **Service configuration files** — import or create files, edit UTF-8 text, and add nested subdirectories under `configs/<service>/`
 - **Preview** — live `stack.yml` and `compose.yml.j2` preview before writing any files
 - **Recent stacks** — quick access to previously generated stacks
 - **Same output format** as the original `new-stack.sh`
@@ -22,17 +23,22 @@ A Python GUI application to scaffold Docker Swarm stack files
 
 - Python 3.11+
 - `python-pyqt6` (install via `sudo pacman -S python-pyqt6` on Arch)
-- `requests` and `PyYAML` (already installed system-wide)
+- `requests`, `PyYAML`, and `Jinja2`
 
 ## Usage
 
 ```bash
 # From the project directory:
+python -m pip install -e .
 python run.py
 
 # Or as a module:
 python -m docker_stack_generator
 ```
+
+In VS Code, use **Terminal > Run Task > Install prerequisites** to install the
+application and its declared dependencies into the `python` environment on your PATH.
+Use **Run application** to launch the GUI from the workspace directory.
 
 ## Project Structure
 
@@ -83,6 +89,31 @@ Settings are retained when saving and reopening a stack.
 The Traefik network must also be attached to the service in the stack's networks or
 the service's Networking tab; changing a label does not attach a network.
 
+## Service Configuration Files
+
+Each service has a **Configurations** tab. Import existing files or create new
+ones, optionally specifying a destination subdirectory such as `dynamic`.
+Imported files are saved with the stack, so the original files are not needed
+when generating the stack later or on another machine after importing that stack.
+
+Select a file to edit its UTF-8 text. Binary files are preserved without editing.
+Double-click a file path to rename it or move it into a relative subdirectory.
+Use the Subdirectories list for additional folders, including empty ones.
+
+Generation writes files under `configs/<service-name>/` and creates their parent
+directories. For example, a Traefik service can contain `traefik.yml` alongside
+`dynamic/routes.yml`, or an empty `dynamic` directory. Empty directories receive
+a `.gitkeep` so they can be retained in version control. Paths must be relative,
+use forward slashes, and cannot escape the service directory.
+
+Regeneration requires the existing overwrite option. It updates configured files
+but leaves unrelated files alone. Removing an entry does not delete a previously
+generated file from disk. File contents are included in saved stack definitions
+and exports; do not import credentials that should instead be stored as secrets.
+
+Configuration files are not automatically mounted into containers. Add the
+appropriate config bind mounts in the service's **Volumes** tab.
+
 ## Generated Output
 
 
@@ -91,7 +122,12 @@ stacks/<env>/<stack-name>/
 ├── stack.yml          # environment variables and network config
 ├── compose.yml.j2     # Jinja2 Compose template for Docker Swarm
 ├── README.md          # auto-generated documentation
-├── configs/.gitkeep
+├── configs/
+│   ├── .gitkeep
+│   └── <service-name>/
+│       ├── app.yml
+│       └── dynamic/
+│           └── routes.yml
 └── secrets/.gitkeep
 
 stacks/templates/      # shared Jinja snippets (created once, never overwritten)

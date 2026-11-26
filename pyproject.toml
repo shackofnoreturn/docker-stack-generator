@@ -1,6 +1,6 @@
 [project]
 name = "docker-stack-generator"
-version = "1.0.0"
+version = "1.1.0"
 description = "GUI tool to scaffold Docker Swarm stack files"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,3 +16,4 @@ docker-stack-generator = "docker_stack_generator.app:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
