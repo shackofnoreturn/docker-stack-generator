@@ -218,17 +218,12 @@ def generate_compose_j2(cfg: StackConfig) -> str:
                     lines.append(f"      - {vm.host_path}:{vm.container_path}{ro_suffix}")
                 elif vm.kind == "config":
                     lines.append(
-                        f"      - ${{PATH_DOCKER_STACKS}}/${{{{env}}}}/{vm.host_path}:{vm.container_path}{ro_suffix}"
+                        f"      - ${{PATH_DOCKER_STACKS}}/${{env}}/{vm.host_path}:{vm.container_path}{ro_suffix}"
                     )
                 else:  # data
                     lines.append(
-                        f"      - ${{PATH_DOCKER_DATA}}/${{{{env}}}}/{vm.host_path}:{vm.container_path}{ro_suffix}"
+                        f"      - ${{PATH_DOCKER_DATA}}/${{env}}/{vm.host_path}:{vm.container_path}{ro_suffix}"
                     )
-            lines.append("")
-        else:
-            lines.append(f"    # TODO: Add service-specific volumes and configuration here.")
-            lines.append(f"    # TODO: Example: ${{PATH_DOCKER_DATA}}/${{{{env}}}}/{cfg.name}/{svc.name}:/config")
-            lines.append("")
 
         # Ports (long-form)
         if svc.ports:
@@ -283,6 +278,8 @@ def generate_compose_j2(cfg: StackConfig) -> str:
         lines.append(f"    name: ${{{net_var}}}")
         lines.append("    external: true")
         lines.append("")
+
+    lines.append("")
 
     # Bottom-level secrets block
     if all_secrets:
