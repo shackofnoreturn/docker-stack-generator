@@ -81,6 +81,20 @@ class MainWindow(QMainWindow):
         file_menu.addAction(save_lib_act)
 
         file_menu.addSeparator()
+
+        backup_act = QAction("💾 &Backup Library…", self)
+        backup_act.triggered.connect(self._backup_library)
+        file_menu.addAction(backup_act)
+
+        restore_act = QAction("📂 &Restore Library…", self)
+        restore_act.triggered.connect(self._restore_library)
+        file_menu.addAction(restore_act)
+
+        export_act = QAction("⬇ &Export to CSV…", self)
+        export_act.triggered.connect(self._export_csv)
+        file_menu.addAction(export_act)
+
+        file_menu.addSeparator()
         quit_act = QAction("&Quit", self)
         quit_act.setShortcut("Ctrl+Q")
         quit_act.triggered.connect(self.close)
@@ -740,3 +754,19 @@ class MainWindow(QMainWindow):
             "persistent, user-friendly Python interface.<br><br>"
             "Built with PyQt6.",
         )
+
+    # ------------------------------------------------------------------
+    # Library backup / restore / export  (delegated to the library widget)
+    # ------------------------------------------------------------------
+
+    def _backup_library(self):
+        self._tabs.setCurrentIndex(1)
+        self._stack_library_widget._backup_library()
+
+    def _restore_library(self):
+        self._tabs.setCurrentIndex(1)
+        self._stack_library_widget._restore_library()
+
+    def _export_csv(self):
+        self._tabs.setCurrentIndex(1)
+        self._stack_library_widget._export_csv()

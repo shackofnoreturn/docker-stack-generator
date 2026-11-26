@@ -5,7 +5,11 @@ Each saved stack is stored as an individual JSON file keyed by
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
+import shutil
+import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -147,6 +151,151 @@ class StackLibrary:
             path.unlink()
             return True
         return False
+
+    # ------------------------------------------------------------------
+    # Backup / Restore
+    # ------------------------------------------------------------------
+
+    def backup(self, dest_path: Path) -> Path:
+        """
+        Create a ZIP archive of all saved stack JSON files at *dest_path*
+        (which should end in .zip).  Returns the path written.
+        """
+        self._dir.mkdir(parents=True, exist_ok=True)
+        dest_path = Path(dest_path)
+        with zipfile.ZipFile(dest_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for json_file in sorted(self._dir.glob("*.json")):
+                zf.write(json_file, arcname=json_file.name)
+        return dest_path
+
+    def restore(self, src_path: Path, merge: bool = False) -> int:
+        """
+        Restore stacks from a ZIP archive created by :meth:`backup`.
+
+        Parameters
+        ----------
+        src_path : Path
+            Path to the .zip backup file.
+        merge : bool
+            If True, existing stacks are kept and only new/updated ones from
+            the archive are written.  If False (default), the library is
+            cleared first.
+
+        Returns
+        -------
+        int
+            Number of stacks restored.
+        """
+        src_path = Path(src_path)
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+        if not merge:
+            for f in self._dir.glob("*.json"):
+                f.unlink()
+
+        count = 0
+        with zipfile.ZipFile(src_path, "r") as zf:
+            for name in zf.namelist():
+                if not name.endswith(".json"):
+                    continue
+                data = json.loads(zf.read(name).decode("utf-8"))
+                # Validate minimal structure
+                if "stack" not in data:
+                    continue
+                (self._dir / name).write_text(
+                    json.dumps(data, indent=2), encoding="utf-8"
+                )
+                count += 1
+        return count
+
+    # ------------------------------------------------------------------
+    # CSV Export
+    # ------------------------------------------------------------------
+
+    def export_csv(self, dest_path: Optional[Path] = None) -> str:
+        """
+        Export the entire library as a CSV string (or write to *dest_path*).
+
+        Each row represents one **service** within a stack.  Columns are:
+
+        stack_key, stack_name, display_name, environment, stacks_root,
+        description, created_at, updated_at, last_generated_at,
+        service_name, service_display_name, image, image_base, image_tag,
+        port, port_source, restart_profile, resource_profile, runtime_dirs
+        """
+        import csv
+        import io
+
+        fieldnames = [
+            "stack_key",
+            "stack_name",
+            "display_name",
+            "environment",
+            "stacks_root",
+            "description",
+            "created_at",
+            "updated_at",
+            "last_generated_at",
+            "service_name",
+            "service_display_name",
+            "image",
+            "image_base",
+            "image_tag",
+            "port",
+            "port_source",
+            "restart_profile",
+            "resource_profile",
+            "runtime_dirs",
+        ]
+
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+
+        for entry in self.list_stacks():
+            cfg = entry.config
+            base = {
+                "stack_key": entry.key,
+                "stack_name": cfg.name,
+                "display_name": cfg.display_name,
+                "environment": cfg.environment,
+                "stacks_root": cfg.stacks_root,
+                "description": cfg.description,
+                "created_at": entry.created_at,
+                "updated_at": entry.updated_at,
+                "last_generated_at": entry.last_generated_at or "",
+            }
+            if cfg.services:
+                for svc in cfg.services:
+                    row = dict(base)
+                    row.update(
+                        {
+                            "service_name": svc.name,
+                            "service_display_name": svc.display_name,
+                            "image": svc.image,
+                            "image_base": svc.image_base,
+                            "image_tag": svc.image_tag,
+                            "port": svc.port,
+                            "port_source": svc.port_source,
+                            "restart_profile": svc.restart_profile,
+                            "resource_profile": svc.resource_profile,
+                            "runtime_dirs": "; ".join(svc.runtime_dirs),
+                        }
+                    )
+                    writer.writerow(row)
+            else:
+                # Stack with no services — still emit a row
+                row = dict(base)
+                for col in fieldnames[len(base):]:
+                    row[col] = ""
+                writer.writerow(row)
+
+        csv_text = buf.getvalue()
+
+        if dest_path is not None:
+            Path(dest_path).write_text(csv_text, encoding="utf-8")
+
+        return csv_text
 
     def duplicate_stack(
         self,

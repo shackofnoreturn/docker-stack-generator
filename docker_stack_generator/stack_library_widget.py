@@ -5,6 +5,7 @@ saved stack definitions so they can be tweaked and re-generated anytime.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +13,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -117,10 +119,31 @@ class StackLibraryWidget(QWidget):
         self._count_label.setStyleSheet("font-size:11px; color:#aaa;")
         hb.addWidget(self._count_label)
 
-        refresh_btn = QPushButton("⟳  Refresh")
-        refresh_btn.setStyleSheet(
-            "color:white; background:#3d4451; border:none; padding:3px 8px; border-radius:3px;"
+        _btn_style = (
+            "color:white; background:#3d4451; border:none; "
+            "padding:3px 8px; border-radius:3px;"
         )
+
+        export_btn = QPushButton("⬇  Export CSV")
+        export_btn.setStyleSheet(_btn_style)
+        export_btn.setToolTip("Export all stacks to a CSV spreadsheet")
+        export_btn.clicked.connect(self._export_csv)
+        hb.addWidget(export_btn)
+
+        backup_btn = QPushButton("💾  Backup")
+        backup_btn.setStyleSheet(_btn_style)
+        backup_btn.setToolTip("Back up the entire Stack Library to a ZIP file")
+        backup_btn.clicked.connect(self._backup_library)
+        hb.addWidget(backup_btn)
+
+        restore_btn = QPushButton("📂  Restore")
+        restore_btn.setStyleSheet(_btn_style)
+        restore_btn.setToolTip("Restore stacks from a ZIP backup")
+        restore_btn.clicked.connect(self._restore_library)
+        hb.addWidget(restore_btn)
+
+        refresh_btn = QPushButton("⟳  Refresh")
+        refresh_btn.setStyleSheet(_btn_style)
         refresh_btn.clicked.connect(self.refresh)
         hb.addWidget(refresh_btn)
 
@@ -428,3 +451,87 @@ class StackLibraryWidget(QWidget):
         del_act = menu.addAction("🗑  Delete from Library")
         del_act.triggered.connect(self._delete_selected)
         menu.exec(self._list.viewport().mapToGlobal(pos))
+
+    # ------------------------------------------------------------------
+    # Backup / Restore / Export
+    # ------------------------------------------------------------------
+
+    def _backup_library(self):
+        """Write a ZIP backup of all saved stacks to a user-chosen path."""
+        from datetime import datetime
+        default_name = f"stack-library-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Back up Stack Library",
+            str(Path.home() / default_name),
+            "ZIP Archives (*.zip)",
+        )
+        if not path:
+            return
+        try:
+            stack_library.backup(Path(path))
+            QMessageBox.information(
+                self,
+                "Backup Complete",
+                f"Stack Library backed up to:\n{path}",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Backup Failed", str(exc))
+
+    def _restore_library(self):
+        """Restore stacks from a ZIP backup, with choice to merge or replace."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Restore Stack Library from Backup",
+            str(Path.home()),
+            "ZIP Archives (*.zip)",
+        )
+        if not path:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Restore Mode",
+            "How should existing stacks be handled?\n\n"
+            "• Merge – keep existing stacks and add/update from backup.\n"
+            "• Replace – clear the library first, then restore from backup.\n\n"
+            "Click Yes to Merge, No to Replace, Cancel to abort.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Cancel:
+            return
+        merge = reply == QMessageBox.StandardButton.Yes  # Yes = Merge, No = Replace
+
+        try:
+            count = stack_library.restore(Path(path), merge=merge)
+            self.refresh()
+            QMessageBox.information(
+                self,
+                "Restore Complete",
+                f"Restored {count} stack(s) from:\n{path}",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Restore Failed", str(exc))
+
+    def _export_csv(self):
+        """Export the entire library to a CSV file."""
+        from datetime import datetime
+        default_name = f"stack-library-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Stack Library to CSV",
+            str(Path.home() / default_name),
+            "CSV Files (*.csv)",
+        )
+        if not path:
+            return
+        try:
+            stack_library.export_csv(Path(path))
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                f"Stack Library exported to:\n{path}\n\n"
+                "Open in any spreadsheet application (Excel, LibreOffice Calc, etc.).",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Failed", str(exc))

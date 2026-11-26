@@ -163,7 +163,6 @@ def generate_compose_j2(cfg: StackConfig) -> str:
         lines.append("      replicas: 1")
         lines.append(f"{{% include '../../templates/policies/{svc.restart_profile}.yml.j2' %}}")
         lines.append(f"{{% include '../../templates/resources/{svc.resource_profile}.yml.j2' %}}")
-        lines.append("      # TODO: Add placement constraints and optional Traefik/Homepage labels.")
         lines.append("")
 
     lines.append("networks:")
@@ -177,7 +176,8 @@ def generate_compose_j2(cfg: StackConfig) -> str:
 
 
 def generate_readme(cfg: StackConfig) -> str:
-    lines = [f"# Stack: {cfg.name}", ""]
+    title = cfg.display_name.strip().title() if cfg.display_name else cfg.name.replace("_", " ").title()
+    lines = [f"# Stack: {title}", ""]
     if cfg.description and cfg.description.strip():
         lines.append(cfg.description.strip())
     else:
