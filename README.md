@@ -79,3 +79,35 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
 ├── mounts/runtime-config.yml.j2
 └── placement/node-label.yml.j2
 ```
+
+# Todo
+
+- [ ] Per service ability in a seperate tab to add environment variables. If the information is available, list the available environment variables for that service. Needs to be added to the environment variables in the compose file.
+- [ ] Have a tab per service for the traefik labels and add these. "whoami" in this case needs to be swapped out with the service name. WHOAMI in the port variable needs to swapped with the service name in all caps.
+
+        # ---------------------------------------------------------------------
+        # Traefik
+        # ---------------------------------------------------------------------
+
+        - traefik.enable=true
+        - traefik.swarm.network=${NETWORK_TRAEFIK}
+
+        # HTTP
+        - traefik.http.routers.whoami.rule=Host(`whoami.${DOMAIN}`)
+        - traefik.http.routers.whoami.entrypoints=websecure
+        - traefik.http.routers.whoami.service=whoami
+
+        # Port
+        - traefik.http.services.whoami.loadbalancer.server.port=${WHOAMI_PORT}
+
+- [ ] Add a tab per service for the Homepage labels. Group is custumizable. Name is the service name by default. Icon is the servicename by default. href needs whoami to be replaced by the service name. And add the service description at the description.
+
+        # ---------------------------------------------------------------------
+        # Homepage
+        # ---------------------------------------------------------------------
+
+        - homepage.group=Infrastructure
+        - homepage.name=Whoami
+        - homepage.icon=mdi-account-question
+        - homepage.href=https://whoami.${DOMAIN}
+        - homepage.description=Traefik whoami test service
