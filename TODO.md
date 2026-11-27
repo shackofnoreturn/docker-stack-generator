@@ -27,7 +27,7 @@ Image-declared Docker Hub volumes can now be suggested as runtime directories an
 - [x] When searching Docker Hub for an image for my service the image names in the list are cut off short. Sometime the name is cut off or the star number amount. It needs some more characters to be show.
 
 
-- [ ] When scrolling through Docker Hub images I would like to be able to sort by different criteria.
+- [x] When scrolling through Docker Hub images I would like to be able to sort by different criteria.
 
 
 - [ ] I would like to edit services in the Stack Manager tab. I can see the services. I would only need to double click one and the same dialog could pop up like it does in the generator tab.

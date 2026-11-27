@@ -58,7 +58,7 @@ from docker_stack_generator.highlighter import ConfigFileHighlighter
 from docker_stack_generator.credential_vault import CredentialVault
 from docker_stack_generator.secret_widgets import edit_secret
 from docker_stack_generator.age_secrets import validate_secret_name
-from docker_stack_generator.dockerhub import format_search_result
+from docker_stack_generator.dockerhub import format_search_result, sort_search_results
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +754,17 @@ class ServiceDialog(QDialog):
         history_row.addWidget(self._history_combo)
         lv.addLayout(history_row)
 
+        sort_row = QHBoxLayout()
+        sort_row.addWidget(QLabel("Sort results:"))
+        self._sort_combo = QComboBox()
+        self._sort_combo.addItem("Relevance", "relevance")
+        self._sort_combo.addItem("Stars", "stars")
+        self._sort_combo.addItem("Pulls", "pulls")
+        self._sort_combo.addItem("Name", "name")
+        self._sort_combo.currentIndexChanged.connect(self._render_search_results)
+        sort_row.addWidget(self._sort_combo)
+        lv.addLayout(sort_row)
+
         self._result_list = QListWidget()
         self._result_list.setAlternatingRowColors(True)
         self._result_list.setWordWrap(True)
@@ -1190,10 +1201,15 @@ class ServiceDialog(QDialog):
     def _on_search_done(self, results: list[dict]):
         self._search_btn.setEnabled(True)
         self._search_results = results
+        self._render_search_results()
+
+    def _render_search_results(self, *_):
         self._result_list.clear()
-        if not results:
+        if not self._search_results:
             self._search_status.setText("No results found.")
             return
+        sort_by = self._sort_combo.currentData()
+        results = sort_search_results(self._search_results, sort_by)
         for r in results:
             text, tooltip = format_search_result(r)
             item = QListWidgetItem(text)
@@ -1377,3 +1393,4 @@ class ServiceDialog(QDialog):
             config_files=config_files,
             config_directories=config_directories,
         )
+

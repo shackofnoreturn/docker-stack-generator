@@ -65,6 +65,17 @@ def format_search_result(result: dict) -> tuple[str, str]:
     return text, tooltip
 
 
+def sort_search_results(results: list[dict], sort_by: str) -> list[dict]:
+    """Sort fetched results locally, preserving relevance order as the default."""
+    if sort_by == "stars":
+        return sorted(results, key=lambda result: result.get("star_count") or 0, reverse=True)
+    if sort_by == "pulls":
+        return sorted(results, key=lambda result: result.get("pull_count") or 0, reverse=True)
+    if sort_by == "name":
+        return sorted(results, key=lambda result: result.get("name", "").casefold())
+    return list(results)
+
+
 # ---------------------------------------------------------------------------
 # Registry auth + manifest inspection
 # ---------------------------------------------------------------------------
@@ -267,3 +278,4 @@ def get_exposed_ports(image: str) -> list[str]:
         if m:
             ports.append(m.group(1))
     return sorted(ports, key=int)
+
