@@ -8,7 +8,8 @@ from tempfile import TemporaryDirectory
 import yaml
 
 from docker_stack_generator.generator import (
-    ServiceConfig, StackConfig, generate_stack, render_compose_preview,
+    ServiceConfig, StackConfig, VolumeMount, generate_stack, render_compose_preview,
+    runtime_directory_suggestions,
 )
 from docker_stack_generator.stack_library import SavedStack
 
@@ -53,6 +54,53 @@ class ComposeEnvironmentTests(unittest.TestCase):
         data = json.loads(json.dumps(SavedStack("development__demo", config).to_dict()))
         restored = SavedStack.from_dict(data)
         self.assertEqual(restored.config.services[0].environment, config.services[0].environment)
+
+    def test_runtime_directory_volume_mount_generation(self):
+        service = make_service(
+            runtime_dirs=["var/lib/app"],
+            volumes=[
+                VolumeMount(
+                    kind="data", host_path="var/lib/app", container_path="/var/lib/app",
+                    read_only=False, runtime_dir=True,
+                ),
+                VolumeMount(
+                    kind="data", host_path="other/path", container_path="/other/path",
+                    read_only=False,
+                ),
+            ],
+        )
+        config = StackConfig("demo", "Demo", "development", "", services=[service])
+        compose = render_compose_preview(config)
+        self.assertIn(
+            "${PATH_DOCKER_DATA}/${env}/demo/redis/var/lib/app:/var/lib/app",
+            compose,
+        )
+        self.assertIn(
+            "${PATH_DOCKER_DATA}/${env}/other/path:/other/path",
+            compose,
+        )
+        saved = SavedStack("development__demo", config).to_dict()
+        restored = SavedStack.from_dict(saved).config.services[0]
+        self.assertTrue(restored.volumes[0].runtime_dir)
+        self.assertFalse(restored.volumes[1].runtime_dir)
+
+    def test_runtime_directory_suggestions_use_safe_image_volumes(self):
+        self.assertEqual(
+            runtime_directory_suggestions({
+                "volumes": {
+                    "/var/lib/app": {},
+                    "/cache": {},
+                    "relative/path": {},
+                    "/unsafe/../path": {},
+                    "/invalid//path": {},
+                    "/unsupported path": {},
+                }
+            }),
+            [
+                ("var/lib/app", "/var/lib/app"),
+                ("cache", "/cache"),
+            ],
+        )
 
     def test_old_saved_stack_defaults_to_empty_environment(self):
         config = StackConfig("demo", "Demo", "development", "", services=[make_service()])
@@ -131,7 +179,34 @@ class EnvironmentEditorTests(unittest.TestCase):
         self.dialog._on_meta_done({"image": "nginx", "env": ["STALE=default"]}, [])
         self.assertEqual(self.editor._available.count(), 0)
 
+    def test_image_volumes_suggest_runtime_directories_and_mounts(self):
+        self.dialog._metadata = {
+            "volumes": {
+                "/var/lib/app": {},
+                "/cache": {},
+                "relative/path": {},
+                "/unsafe/../path": {},
+                "/invalid//path": {},
+            }
+        }
+        self.dialog._suggest_runtime_dirs()
+        self.assertEqual(
+            [self.dialog._rdir_list.item(i).text() for i in range(self.dialog._rdir_list.count())],
+            ["var/lib/app", "cache"],
+        )
+        mounts = self.dialog._volumes_editor.values()
+        self.assertEqual(
+            [(mount.host_path, mount.container_path, mount.runtime_dir) for mount in mounts],
+            [
+                ("var/lib/app", "/var/lib/app", True),
+                ("cache", "/cache", True),
+            ],
+        )
+
+        self.dialog._suggest_runtime_dirs()
+        self.assertEqual(self.dialog._rdir_list.count(), 2)
+        self.assertEqual(len(self.dialog._volumes_editor.values()), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
-

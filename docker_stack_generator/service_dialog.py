@@ -51,6 +51,7 @@ from docker_stack_generator.generator import (
     slugify,
     traefik_label_defaults,
     validate_service_configs,
+    runtime_directory_suggestions,
 )
 from docker_stack_generator.widgets import MetadataWorker, ProfileSelector, SearchWorker
 from docker_stack_generator.highlighter import ConfigFileHighlighter
@@ -290,6 +291,12 @@ class _VolumeEditor(QWidget):
         self._ro_check = QCheckBox("Read-only (:ro)")
         self._ro_check.setChecked(True)
         btn_row.addWidget(self._ro_check)
+        self._runtime_dir_check = QCheckBox("Under service runtime directory")
+        self._runtime_dir_check.setToolTip(
+            "Use <stack>/<service>/<host path>, which is also created by runtime_directories."
+        )
+        self._runtime_dir_check.setEnabled(False)
+        btn_row.addWidget(self._runtime_dir_check)
         btn_row.addStretch()
 
         add_btn = QPushButton("＋ Add volume")
@@ -314,6 +321,9 @@ class _VolumeEditor(QWidget):
 
     def _on_kind_changed(self, kind: str):
         self._kind_hint.setText(self._KIND_HINTS.get(kind, ""))
+        self._runtime_dir_check.setEnabled(kind == "data")
+        if kind != "data":
+            self._runtime_dir_check.setChecked(False)
         if kind == "socket":
             self._host_label.setText("Host path:")
             self._host_in.setPlaceholderText("/var/run/docker.sock")
@@ -337,6 +347,11 @@ class _VolumeEditor(QWidget):
             return f"[socket]  {vm.host_path}:{vm.container_path}{ro}"
         elif vm.kind == "config":
             return f"[config]  …/${{env}}/{vm.host_path}:{vm.container_path}{ro}"
+        elif vm.runtime_dir:
+            return (
+                f"[data/runtime]  …/${{env}}/<stack>/<service>/{vm.host_path}:"
+                f"{vm.container_path}{ro}"
+            )
         else:
             return f"[data]    …/${{env}}/{vm.host_path}:{vm.container_path}{ro}"
 
@@ -353,6 +368,10 @@ class _VolumeEditor(QWidget):
             host_path=host,
             container_path=ctr,
             read_only=self._ro_check.isChecked(),
+            runtime_dir=(
+                self._kind_combo.currentText() == "data"
+                and self._runtime_dir_check.isChecked()
+            ),
         )
         item = QListWidgetItem(self._vm_label(vm))
         item.setData(Qt.ItemDataRole.UserRole, vm)
@@ -371,6 +390,7 @@ class _VolumeEditor(QWidget):
         self._host_in.setText(vm.host_path)
         self._ctr_in.setText(vm.container_path)
         self._ro_check.setChecked(vm.read_only)
+        self._runtime_dir_check.setChecked(vm.runtime_dir)
 
     def values(self) -> list[VolumeMount]:
         return [
@@ -872,6 +892,14 @@ class ServiceDialog(QDialog):
         self._rdir_list.setAlternatingRowColors(True)
         rdl.addWidget(self._rdir_list)
 
+        self._suggest_rdirs_btn = QPushButton("Suggest from image metadata")
+        self._suggest_rdirs_btn.setToolTip(
+            "Add runtime directories and data mounts for volumes declared by the image."
+        )
+        self._suggest_rdirs_btn.clicked.connect(self._suggest_runtime_dirs)
+        self._suggest_rdirs_btn.setEnabled(False)
+        rdl.addWidget(self._suggest_rdirs_btn)
+
         rdir_input_row = QHBoxLayout()
         self._rdir_input = QLineEdit()
         self._rdir_input.setPlaceholderText("subdirectory name (or leave blank for base path)")
@@ -1087,6 +1115,9 @@ class ServiceDialog(QDialog):
         self._restart_profile.set_value(svc.restart_profile)
         self._resource_profile.set_value(svc.resource_profile)
         self._metadata = svc.metadata
+        self._suggest_rdirs_btn.setEnabled(
+            bool(runtime_directory_suggestions(svc.metadata or {}))
+        )
         self._environment_editor.set_values(svc.environment)
         self._environment_editor.set_available(svc.metadata or None)
         self._traefik_editor.set_values(svc.traefik)
@@ -1196,6 +1227,7 @@ class ServiceDialog(QDialog):
         self._port_combo.clear()
         self._meta_label.setText("")
         self._metadata = {}
+        self._suggest_rdirs_btn.setEnabled(False)
         self._environment_editor.set_available()
 
     def _fetch_metadata(self):
@@ -1216,6 +1248,7 @@ class ServiceDialog(QDialog):
             return
         self._metadata = meta
         self._environment_editor.set_available(meta)
+        self._suggest_rdirs_btn.setEnabled(bool(runtime_directory_suggestions(meta)))
 
         self._port_combo.clear()
         for p in ports:
@@ -1245,7 +1278,35 @@ class ServiceDialog(QDialog):
 
     def _on_meta_error(self, msg: str):
         self._fetch_btn.setEnabled(True)
+        self._suggest_rdirs_btn.setEnabled(False)
         self._meta_label.setText(f"<span style='color:red;'>Metadata error: {msg}</span>")
+
+    def _suggest_runtime_dirs(self):
+        existing_dirs = {
+            self._rdir_list.item(i).text()
+            for i in range(self._rdir_list.count())
+        }
+        existing_mount_targets = {
+            vm.container_path for vm in self._volumes_editor.values()
+        }
+
+        for subdir, container_path in runtime_directory_suggestions(self._metadata):
+            if subdir not in existing_dirs:
+                self._rdir_list.addItem(QListWidgetItem(subdir))
+                existing_dirs.add(subdir)
+
+            mount = VolumeMount(
+                kind="data",
+                host_path=subdir,
+                container_path=container_path,
+                read_only=False,
+                runtime_dir=True,
+            )
+            if mount.container_path not in existing_mount_targets:
+                item = QListWidgetItem(self._volumes_editor._vm_label(mount))
+                item.setData(Qt.ItemDataRole.UserRole, mount)
+                self._volumes_editor._list.addItem(item)
+                existing_mount_targets.add(mount.container_path)
 
     # ------------------------------------------------------------------
     # Validation & result
