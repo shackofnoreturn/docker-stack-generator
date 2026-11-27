@@ -44,6 +44,9 @@ python -m docker_stack_generator
 In VS Code, use **Terminal > Run Task > Install prerequisites** to install the
 application and its declared dependencies into the `python` environment on your PATH.
 Use **Run application** to launch the GUI from the workspace directory.
+On Omarchy, run **Install Omarchy application shortcut** once to add Docker Stack
+Generator to the applications menu with its icon. Run the task again after moving
+the checkout.
 
 Navigate using the main tabs. **Edit > Settings** (`Ctrl+,`) opens settings,
 and **File > New Stack** (`Ctrl+N`) starts a fresh stack. There is no separate
@@ -366,3 +369,4 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
 ├── mounts/runtime-config.yml.j2
 └── placement/node-label.yml.j2
 ```
+
