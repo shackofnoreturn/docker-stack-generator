@@ -92,6 +92,7 @@ class StackLibraryWidget(QWidget):
 
     load_requested = pyqtSignal(object)  # SavedStack
     generate_requested = pyqtSignal(object, bool)  # SavedStack, sync
+    edit_service_requested = pyqtSignal(object, int)  # SavedStack, service index
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -218,6 +219,7 @@ class StackLibraryWidget(QWidget):
         self._svc_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._svc_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._svc_table.setAlternatingRowColors(True)
+        self._svc_table.cellDoubleClicked.connect(self._on_service_double_clicked)
         self._svc_table.verticalHeader().setVisible(False)
         hdr = self._svc_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -406,6 +408,11 @@ class StackLibraryWidget(QWidget):
             return
         self.load_requested.emit(self._current)
 
+    def _on_service_double_clicked(self, row: int, _column: int):
+        if self._current is None or not 0 <= row < len(self._current.config.services):
+            return
+        self.edit_service_requested.emit(self._current, row)
+
     def set_generation_busy(self, busy: bool):
         self._generation_busy = busy
         self._generate_btn.setEnabled(self._current is not None and not busy)
@@ -554,3 +561,4 @@ class StackLibraryWidget(QWidget):
             )
         except Exception as exc:
             QMessageBox.critical(self, "Export Failed", str(exc))
+

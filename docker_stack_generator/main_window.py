@@ -159,6 +159,7 @@ class MainWindow(QMainWindow):
         self._stack_library_widget = StackLibraryWidget()
         self._stack_library_widget.load_requested.connect(self._load_from_library)
         self._stack_library_widget.generate_requested.connect(self._generate_from_library)
+        self._stack_library_widget.edit_service_requested.connect(self._edit_library_service)
         self._tabs.addTab(self._stack_library_widget, "📚  Stack Library")
 
         # ---- Tab 3: Template Library ---------------------------------------
@@ -424,6 +425,35 @@ class MainWindow(QMainWindow):
             self._services[idx] = new_svc
             self._refresh_services_list()
             self._refresh_preview()
+
+    def _edit_library_service(self, saved: SavedStack, index: int):
+        if not 0 <= index < len(saved.config.services):
+            return
+
+        cfg = deepcopy(saved.config)
+        existing = cfg.services[index]
+        dlg = ServiceDialog(self, existing=existing, vault=self._monitoring_widget._vault)
+        if not dlg.exec():
+            return
+
+        updated = dlg.result_service()
+        if any(
+            service.name == updated.name and service_index != index
+            for service_index, service in enumerate(cfg.services)
+        ):
+            QMessageBox.warning(
+                self,
+                "Duplicate service",
+                f"Another service named '{updated.name}' already exists.",
+            )
+            return
+
+        cfg.services[index] = updated
+        saved = stack_library.save_stack(cfg, generated=False)
+        self._stack_library_widget.refresh()
+        self._status.showMessage(
+            f"Saved service '{updated.display_name}' in '{saved.config.display_name}'."
+        )
 
     def _remove_service(self):
         idx = self._services_list.currentRow()
@@ -812,3 +842,4 @@ class MainWindow(QMainWindow):
     def _export_csv(self):
         self._tabs.setCurrentIndex(1)
         self._stack_library_widget._export_csv()
+

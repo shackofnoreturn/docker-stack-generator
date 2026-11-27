@@ -60,6 +60,57 @@ class LibraryGenerationTests(unittest.TestCase):
         widget._clear_details()
         self.assertFalse(widget._generate_btn.isEnabled())
 
+    def test_double_clicking_service_row_requests_edit_for_selected_stack(self):
+        from docker_stack_generator.stack_library_widget import StackLibraryWidget
+
+        widget = StackLibraryWidget()
+        self.addCleanup(widget.deleteLater)
+        widget._show_entry(self.saved)
+        requested = Mock()
+        widget.edit_service_requested.connect(requested)
+
+        widget._svc_table.cellDoubleClicked.emit(0, 0)
+
+        requested.assert_called_once_with(self.saved, 0)
+
+    def test_accepted_library_service_edit_saves_copy_and_refreshes(self):
+        from docker_stack_generator.generator import StackConfig
+
+        updated_service = make_service(description="updated")
+        self.window._monitoring_widget = Mock(_vault=object())
+        self.window._stack_library_widget.refresh = Mock()
+        with patch("docker_stack_generator.main_window.ServiceDialog") as dialog_class, \
+                patch("docker_stack_generator.main_window.stack_library.save_stack", return_value=self.saved) as save:
+            dialog_class.return_value.exec.return_value = 1
+            dialog_class.return_value.result_service.return_value = updated_service
+
+            self.window._edit_library_service(self.saved, 0)
+
+        saved_config = save.call_args.args[0]
+        self.assertIsInstance(saved_config, StackConfig)
+        self.assertIsNot(saved_config, self.saved.config)
+        self.assertIs(saved_config.services[0], updated_service)
+        self.assertEqual(self.saved.config.services[0].description, "")
+        save.assert_called_once_with(saved_config, generated=False)
+        self.window._stack_library_widget.refresh.assert_called_once_with()
+        dialog_args, dialog_kwargs = dialog_class.call_args
+        self.assertIs(dialog_args[0], self.window)
+        self.assertEqual(dialog_kwargs["existing"].name, self.saved.config.services[0].name)
+        self.assertIsNot(dialog_kwargs["existing"], self.saved.config.services[0])
+        self.assertIs(dialog_kwargs["vault"], self.window._monitoring_widget._vault)
+
+    def test_cancelled_library_service_edit_does_not_save(self):
+        self.window._monitoring_widget = Mock(_vault=object())
+        with patch("docker_stack_generator.main_window.ServiceDialog") as dialog_class, \
+                patch("docker_stack_generator.main_window.stack_library.save_stack") as save:
+            dialog_class.return_value.exec.return_value = 0
+
+            self.window._edit_library_service(self.saved, 0)
+
+        save.assert_not_called()
+        self.window._stack_library_widget.refresh.assert_not_called()
+        self.assertEqual(self.saved.config.services[0].description, "")
+
     def test_library_generation_copies_saved_config_without_touching_form(self):
         with patch.object(self.window, "_start_generation") as start, \
                 patch("docker_stack_generator.main_window.settings") as settings:
@@ -118,3 +169,4 @@ class LibraryGenerationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
