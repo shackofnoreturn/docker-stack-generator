@@ -4,6 +4,8 @@ Main application window.
 from __future__ import annotations
 
 import os
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -18,17 +20,13 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSizePolicy,
     QSplitter,
     QStatusBar,
     QTabWidget,
     QTextEdit,
-    QToolBar,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -40,7 +38,7 @@ from docker_stack_generator.generator import (
     GenerationError,
     ServiceConfig,
     StackConfig,
-    slugify,
+    stack_slugify,
 )
 from docker_stack_generator.highlighter import Jinja2YamlHighlighter
 from docker_stack_generator.service_dialog import ServiceDialog
@@ -48,7 +46,9 @@ from docker_stack_generator.settings_dialog import SettingsDialog
 from docker_stack_generator.stack_library import SavedStack, stack_library
 from docker_stack_generator.stack_library_widget import StackLibraryWidget
 from docker_stack_generator.template_manager import TemplateManagerWidget
-from docker_stack_generator.widgets import GenerateWorker, HSeparator
+from docker_stack_generator.widgets import GenerateButton, GenerateWorker, HSeparator
+from docker_stack_generator.credential_vault import VaultError
+from docker_stack_generator.secret_store import read_secret
 
 
 class MainWindow(QMainWindow):
@@ -57,10 +57,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Docker Stack Generator")
         self.setMinimumSize(980, 680)
         self._services: list[ServiceConfig] = []
+        self._loaded_stack_identity: Optional[tuple[str, str]] = None
         self._generate_worker: Optional[GenerateWorker] = None
 
         self._build_menu()
-        self._build_toolbar()
         self._build_ui()
         self._restore_geometry()
         self._check_settings()
@@ -133,38 +133,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_act)
 
     # ------------------------------------------------------------------
-    # Toolbar
-    # ------------------------------------------------------------------
-
-    def _build_toolbar(self):
-        tb = QToolBar("Main")
-        tb.setMovable(False)
-        self.addToolBar(tb)
-
-        new_btn = QPushButton("🗋  New Stack")
-        new_btn.clicked.connect(self._reset_form)
-        tb.addWidget(new_btn)
-
-        tb.addSeparator()
-
-        lib_btn = QPushButton("📚  Stack Library")
-        lib_btn.setToolTip("Open Stack Library (Ctrl+2)")
-        lib_btn.clicked.connect(lambda: self._tabs.setCurrentIndex(1))
-        tb.addWidget(lib_btn)
-
-        tpl_btn = QPushButton("📂  Templates")
-        tpl_btn.setToolTip("Open Template Library (Ctrl+3)")
-        tpl_btn.clicked.connect(lambda: self._tabs.setCurrentIndex(2))
-        tb.addWidget(tpl_btn)
-
-        tb.addSeparator()
-
-        settings_btn = QPushButton("⚙  Settings")
-        settings_btn.clicked.connect(self._open_settings)
-        tb.addWidget(settings_btn)
-
-    # ------------------------------------------------------------------
-    # Central UI  —  three tabs
+    # Central UI
     # ------------------------------------------------------------------
 
     def _build_ui(self):
@@ -189,15 +158,16 @@ class MainWindow(QMainWindow):
         # ---- Tab 2: Stack Library ------------------------------------------
         self._stack_library_widget = StackLibraryWidget()
         self._stack_library_widget.load_requested.connect(self._load_from_library)
+        self._stack_library_widget.generate_requested.connect(self._generate_from_library)
         self._tabs.addTab(self._stack_library_widget, "📚  Stack Library")
 
         # ---- Tab 3: Template Library ---------------------------------------
         self._tpl_manager = TemplateManagerWidget()
         self._tabs.addTab(self._tpl_manager, "📂  Template Library")
         self._deployment_widget = DeploymentWidget()
-        self._tabs.addTab(self._deployment_widget, "Deployments")
+        self._tabs.addTab(self._deployment_widget, "🚀  Deployments")
         self._monitoring_widget = MonitoringWidget()
-        self._tabs.addTab(self._monitoring_widget, "Monitoring")
+        self._tabs.addTab(self._monitoring_widget, "📊  Monitoring")
         self._tabs.currentChanged.connect(
             lambda index: self._deployment_widget.refresh_stacks() if index == 3 else None
         )
@@ -321,28 +291,8 @@ class MainWindow(QMainWindow):
         save_lib_btn.clicked.connect(self._save_to_library)
         action_row.addWidget(save_lib_btn)
 
-        gen_btn = QToolButton()
-        generate_action = QAction("🚀  Generate Stack", self)
-        generate_action.triggered.connect(lambda: self._generate())
-        gen_btn.setDefaultAction(generate_action)
-        gen_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        gen_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        gen_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        generate_menu = QMenu(gen_btn)
-        generate_menu.addAction(generate_action)
-        self._generate_sync_action = generate_menu.addAction("Generate && Sync")
-        self._generate_sync_action.setToolTip(
-            "Generate files, commit only generated files, and push to the destination branch's upstream"
-        )
-        self._generate_sync_action.triggered.connect(lambda: self._generate(sync=True))
-        gen_btn.setMenu(generate_menu)
-        gen_btn.setMinimumHeight(40)
-        gen_btn.setStyleSheet(
-            "QToolButton { background: #2a7ae2; color: white; font-weight: bold; border-radius: 5px; padding: 0 20px 0 8px; }"
-            "QToolButton:hover { background: #1a5fc5; }"
-            "QToolButton:disabled { background: #aaa; }"
-            "QToolButton::menu-button { width: 20px; border-left: 1px solid #fff; }"
-        )
+        gen_btn = GenerateButton(lambda: self._generate(), lambda: self._generate(sync=True), self)
+        self._generate_sync_action = gen_btn.sync_action
         self._generate_btn = gen_btn
         action_row.addWidget(gen_btn, 1)
 
@@ -411,8 +361,14 @@ class MainWindow(QMainWindow):
     # Slug / path update
     # ------------------------------------------------------------------
 
+    def _stack_name(self, text: str) -> str:
+        identity = getattr(self, "_loaded_stack_identity", None)
+        if identity is not None and text.strip() == identity[0]:
+            return identity[1]
+        return stack_slugify(text)
+
     def _update_preview_header(self, text: str):
-        slug = slugify(text)
+        slug = self._stack_name(text)
         self._slug_label.setText(f"→ {slug}" if slug else "")
         self._update_path_label()
         self._refresh_preview()
@@ -420,7 +376,7 @@ class MainWindow(QMainWindow):
     def _update_path_label(self):
         root = settings.stacks_root
         env = self._env_input.text().strip() or settings.stacks_env
-        name = slugify(self._stack_name_input.text().strip())
+        name = self._stack_name(self._stack_name_input.text().strip())
         if root and env and name:
             path = str(Path(root) / env / name)
             self._path_label.setText(f"<b>{path}</b>")
@@ -434,7 +390,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _add_service(self):
-        dlg = ServiceDialog(self)
+        dlg = ServiceDialog(self, vault=self._monitoring_widget._vault)
         if dlg.exec():
             svc = dlg.result_service()
             if any(s.name == svc.name for s in self._services):
@@ -455,7 +411,7 @@ class MainWindow(QMainWindow):
             return
         idx = self._services_list.row(item)
         svc = self._services[idx]
-        dlg = ServiceDialog(self, existing=svc)
+        dlg = ServiceDialog(self, existing=svc, vault=self._monitoring_widget._vault)
         if dlg.exec():
             new_svc = dlg.result_service()
             if any(s.name == new_svc.name and i != idx for i, s in enumerate(self._services)):
@@ -523,7 +479,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_preview(self):
         name_raw = self._stack_name_input.text().strip()
-        name = slugify(name_raw)
+        name = self._stack_name(name_raw)
         if not name or not self._services:
             self._preview_rendered.setPlainText("")
             self._preview_compose_j2.setPlainText("")
@@ -566,7 +522,7 @@ class MainWindow(QMainWindow):
 
     def _save_to_library(self):
         name_raw = self._stack_name_input.text().strip()
-        name = slugify(name_raw)
+        name = self._stack_name(name_raw)
         if not name:
             QMessageBox.warning(self, "Validation", "Please enter a stack name before saving.")
             return
@@ -593,6 +549,7 @@ class MainWindow(QMainWindow):
                 return
 
         cfg = saved.config
+        self._loaded_stack_identity = (cfg.display_name.strip(), cfg.name)
         self._stack_name_input.blockSignals(True)
         self._env_input.blockSignals(True)
         self._stack_name_input.setText(cfg.display_name)
@@ -626,7 +583,7 @@ class MainWindow(QMainWindow):
         if self._generate_worker is not None and self._generate_worker.isRunning():
             return
         name_raw = self._stack_name_input.text().strip()
-        name = slugify(name_raw)
+        name = self._stack_name(name_raw)
 
         if not name:
             QMessageBox.warning(self, "Validation", "Please enter a stack name.")
@@ -645,28 +602,59 @@ class MainWindow(QMainWindow):
 
         cfg = self._build_stack_config(name, name_raw)
         overwrite = self._overwrite_check.isChecked()
+        self._start_generation(cfg, overwrite, sync)
 
+    def _generate_from_library(self, saved: SavedStack, sync: bool):
+        cfg = replace(deepcopy(saved.config), stacks_root=saved.config.stacks_root or settings.stacks_root)
+        self._start_generation(cfg, overwrite=False, sync=sync)
+
+    def _start_generation(self, cfg: StackConfig, overwrite: bool, sync: bool):
+        if self._generate_worker is not None and self._generate_worker.isRunning():
+            return
+        if not cfg.name or not cfg.services:
+            QMessageBox.warning(self, "Validation", "The stack needs a name and at least one service.")
+            return
+        if not cfg.stacks_root:
+            QMessageBox.warning(self, "Settings required", "Please configure the stacks root directory in Settings first.")
+            return
         if cfg.stack_dir.exists() and not overwrite:
             reply = QMessageBox.question(
                 self,
                 "Stack already exists",
-                f"The stack directory already exists:\n{cfg.stack_dir}\n\nOverwrite generated files?",
+                f"The stack directory already exists:\n{cfg.stack_dir}\n\nOverwrite generated files?"
+                + ("\n\nAfter encryption succeeds, matching extensionless and .txt plaintext secret files "
+                   "will be removed. This does not erase Git history."
+                   if any(service.secrets for service in cfg.services) else ""),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
             overwrite = True
 
+        secret_options = {}
+        names = sorted({name for svc in cfg.services for name in svc.secrets})
+        if names:
+            if not self._monitoring_widget._unlock_vault():
+                return
+            try:
+                values = {name: read_secret(self._monitoring_widget._vault, name) for name in names}
+            except (VaultError, ValueError) as exc:
+                QMessageBox.warning(self, "Secrets required", str(exc))
+                return
+            secret_options = {"secret_values": values,
+                              "age_recipients": settings.get("age_recipients", "~/.config/age/key.pub")}
         self._generate_btn.setEnabled(False)
+        self._stack_library_widget.set_generation_busy(True)
         self._status.showMessage("Generating and syncing stack…" if sync else "Generating stack…")
 
-        self._generate_worker = GenerateWorker(cfg, overwrite, sync=sync)
+        self._generate_worker = GenerateWorker(cfg, overwrite, sync=sync, **secret_options)
         self._generate_worker.done.connect(self._on_generate_done)
         self._generate_worker.error.connect(self._on_generate_error)
         self._generate_worker.start()
 
     def _on_generate_done(self, created: list[str]):
         self._generate_btn.setEnabled(True)
+        self._stack_library_widget.set_generation_busy(False)
         worker = self._generate_worker
         if worker is None:
             return
@@ -691,12 +679,13 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Stack Generated & Synced!" if worker.sync else "Stack Generated!",
-            f"Stack scaffold created successfully and saved to Stack Library.\n\nFiles written to:\n  {path}\n\n{created_str}{sync_note}",
+            f"Stack scaffold created successfully and saved to Stack Library.\n\nFiles updated or removed under:\n  {path}\n\n{created_str}{sync_note}",
         )
         self._status.showMessage(f"Stack '{name}' generated at {path}{sync_note}")
 
     def _on_generate_error(self, msg: str):
         self._generate_btn.setEnabled(True)
+        self._stack_library_widget.set_generation_busy(False)
         QMessageBox.critical(self, "Generation Error", msg)
         self._status.showMessage("Generation failed.")
 
@@ -755,6 +744,7 @@ class MainWindow(QMainWindow):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
+        self._loaded_stack_identity = None
         self._stack_name_input.clear()
         self._env_input.setText(settings.stacks_env)
         self._description_input.clear()

@@ -4,17 +4,47 @@ Reusable PyQt6 widgets for the Docker Stack Generator.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
+
+class GenerateButton(QToolButton):
+    """Shared generation split button for the generator and saved stacks."""
+
+    def __init__(self, generate, sync, parent=None):
+        super().__init__(parent)
+        action = QAction("🚀  Generate Stack", self)
+        action.triggered.connect(lambda: generate())
+        self.setDefaultAction(action)
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        menu = QMenu(self)
+        menu.addAction(action)
+        self.sync_action = menu.addAction("Generate && Sync")
+        self.sync_action.setToolTip(
+            "Generate files, commit only generated files, and push to the destination branch's upstream"
+        )
+        self.sync_action.triggered.connect(lambda: sync())
+        self.setMenu(menu)
+        self.setMinimumHeight(40)
+        self.setStyleSheet(
+            "QToolButton { background: #2a7ae2; color: white; font-weight: bold; border-radius: 5px; padding: 0 20px 0 8px; }"
+            "QToolButton:hover { background: #1a5fc5; }"
+            "QToolButton:disabled { background: #aaa; }"
+            "QToolButton::menu-button { width: 20px; border-left: 1px solid #fff; }"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -158,23 +188,35 @@ class GenerateWorker(QThread):
     done = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, cfg, overwrite: bool, sync: bool = False):
+    def __init__(self, cfg, overwrite: bool, sync: bool = False,
+                 secret_values: dict[str, bytes] | None = None, age_recipients: str = ""):
         super().__init__()
         self.cfg = cfg
         self.overwrite = overwrite
         self.sync = sync
         self.sync_result = ""
         self.sync_error = ""
+        self.secret_values = dict(secret_values or {})
+        self.age_recipients = age_recipients
 
     def run(self):
         from docker_stack_generator import generator
         from docker_stack_generator.repository_sync import RepositorySync, RepositorySyncError
         try:
             repository = RepositorySync.prepare(self.cfg) if self.sync else None
-            created = generator.generate_stack(self.cfg, overwrite=self.overwrite)
+            if self.secret_values:
+                from docker_stack_generator.age_secrets import encrypt_secret
+                encrypted = {name: encrypt_secret(value, self.age_recipients)
+                             for name, value in self.secret_values.items()}
+                self.secret_values.clear()
+                created = generator.generate_stack(self.cfg, overwrite=self.overwrite, encrypted_secrets=encrypted)
+            else:
+                created = generator.generate_stack(self.cfg, overwrite=self.overwrite)
         except Exception as exc:
             self.error.emit(str(exc))
             return
+        finally:
+            self.secret_values.clear()
         if repository is not None:
             try:
                 self.sync_result = repository.sync(self.cfg, created)

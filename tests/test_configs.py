@@ -171,7 +171,8 @@ class ConfigFileEditorTests(unittest.TestCase):
     def test_remove_and_service_round_trip(self):
         from docker_stack_generator.service_dialog import ServiceDialog
         self.editor._add_file("app.conf", b"config")
-        self.editor._directories.set_values(["dynamic"])
+        self.editor.set_values(self.editor.values()[0], ["dynamic"])
+        self.editor._files.setCurrentRow(0)
         service = self.dialog.result_service()
         reopened = ServiceDialog(existing=service)
         self.addCleanup(reopened.close)
@@ -184,7 +185,33 @@ class ConfigFileEditorTests(unittest.TestCase):
         self.dialog._name_input.setText("Traefik")
         self.assertEqual(self.editor._destination.text(), "configs/traefik/")
 
+    def test_subdirectories_panel_removed_but_existing_directories_preserved(self):
+        from PyQt6.QtWidgets import QGroupBox
+        self.editor.set_values({}, ["existing/empty"])
+        self.assertNotIn("Subdirectories", [group.title() for group in self.editor.findChildren(QGroupBox)])
+        self.editor._folder.setText("dynamic")
+        self.editor._add_file("routes.yml", b"http: {}\n")
+        files, directories = self.editor.values()
+        self.assertIn("dynamic/routes.yml", files)
+        self.assertEqual(directories, ["existing/empty"])
+        directories.clear()
+        self.assertEqual(self.editor.values()[1], ["existing/empty"])
+
+    def test_config_editor_highlights_text_without_changing_content(self):
+        for filename, contents in (
+            ("routes.yml", b"http:\n  routers: {}\n"),
+            ("app.json", b'{"enabled": true}\n'),
+            ("app.ini", b"[server]\nport = 8080\n"),
+            ("compose.yml.j2", b"image: {{ image }}\n"),
+        ):
+            with self.subTest(filename=filename):
+                self.editor.set_values({}, [])
+                self.editor._add_file(filename, contents)
+                self.editor._highlighter.rehighlight()
+                block = self.editor._contents.document().firstBlock()
+                self.assertTrue(block.layout().formats())
+                self.assertEqual(self.editor.values()[0][filename], encoded(contents))
+
 
 if __name__ == "__main__":
     unittest.main()
-

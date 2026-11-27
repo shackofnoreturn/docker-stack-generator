@@ -17,6 +17,9 @@ from docker_stack_generator.monitoring import (
     stack_state, validate_endpoint,
 )
 from docker_stack_generator.stack_library import stack_library
+from docker_stack_generator.vault_ui import unlock_vault
+from docker_stack_generator.secret_widgets import edit_secret
+from docker_stack_generator.secret_store import read_secret
 
 
 class _MonitorWorker(QThread):
@@ -101,7 +104,7 @@ class _VaultDialog(QDialog):
         self.resize(820, 420)
         layout = QVBoxLayout(self)
         self._entries = QTreeWidget()
-        self._entries.setHeaderLabels(["Stack", "Service", "Endpoint"])
+        self._entries.setHeaderLabels(["Scope / stack", "Service / secret", "Endpoint"])
         self._entries.currentItemChanged.connect(self._selection_changed)
         layout.addWidget(self._entries)
         self._username = QLineEdit()
@@ -142,6 +145,9 @@ class _VaultDialog(QDialog):
             if (isinstance(parts, list) and len(parts) == 4 and parts[0] == "monitoring"
                     and all(isinstance(part, str) for part in parts)):
                 labels = parts[1:]
+            elif (isinstance(parts, list) and len(parts) == 2 and parts[0] == "secret"
+                  and isinstance(parts[1], str)):
+                labels = ["Global secret", parts[1], "Age encrypted output"]
             else:
                 labels = [key, "", ""]
             row = QTreeWidgetItem(labels)
@@ -163,10 +169,23 @@ class _VaultDialog(QDialog):
             if value is not None:
                 self._username.setText(value.get("username", value.get("kind", "")))
                 self._secret.setText(value.get("password", value.get("token", "")))
+                if value.get("kind") == "secret":
+                    try:
+                        name = json.loads(key)[1]
+                        contents = read_secret(self._vault, name)
+                        self._secret.setText(contents.decode("utf-8"))
+                    except (ValueError, UnicodeError, VaultError):
+                        self._secret.setText("(Binary or invalid secret; use the Secrets tab to import a replacement.)")
 
     def _edit_entry(self):
         key = self._key()
         if key is None:
+            return
+        value = self._vault.get(key)
+        if value is not None and value.get("kind") == "secret":
+            parts = json.loads(key)
+            edit_secret(self._vault, parts[1], self)
+            self._selection_changed()
             return
         dialog = _CredentialDialog(self)
         try:
@@ -389,30 +408,10 @@ class MonitoringWidget(QWidget):
             self._editing = False
 
     def _prompt_unlock(self) -> bool:
-        if self._vault.unlocked:
+        if unlock_vault(self._vault, self):
+            self._state.setText("Vault unlocked for this session. Monitoring credentials are sent only to their exact HTTPS endpoint.")
             return True
-        prompt = ("Master password:" if self._vault.exists else
-                  "Create master password (at least 12 characters). It cannot be recovered:")
-        password, accepted = QInputDialog.getText(self, "Credential vault", prompt, QLineEdit.EchoMode.Password)
-        if not accepted:
-            return False
-        if not self._vault.exists:
-            confirmation, accepted = QInputDialog.getText(
-                self, "Credential vault", "Confirm master password:", QLineEdit.EchoMode.Password)
-            if not accepted:
-                return False
-            if password != confirmation:
-                QMessageBox.warning(self, "Credential vault", "Passwords do not match.")
-                return False
-        try:
-            self._vault.unlock(password)
-        except VaultError as exc:
-            QMessageBox.warning(self, "Credential vault", str(exc))
-            return False
-        finally:
-            password = ""
-        self._state.setText("Vault unlocked for this session. Credentials are sent only to their exact HTTPS endpoint.")
-        return True
+        return False
 
     def _lock_vault(self):
         if self._worker is not None:

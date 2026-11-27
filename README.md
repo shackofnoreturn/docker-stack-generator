@@ -28,6 +28,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 - `python-pyqt6` (install via `sudo pacman -S python-pyqt6` on Arch)
 - `requests`, `PyYAML`, and `Jinja2`
 - `cryptography` (encrypted local credential vault)
+- `age` command-line tool on PATH (required when generating or importing encrypted secrets)
 
 ## Usage
 
@@ -43,6 +44,18 @@ python -m docker_stack_generator
 In VS Code, use **Terminal > Run Task > Install prerequisites** to install the
 application and its declared dependencies into the `python` environment on your PATH.
 Use **Run application** to launch the GUI from the workspace directory.
+
+Navigate using the main tabs. **Edit > Settings** (`Ctrl+,`) opens settings,
+and **File > New Stack** (`Ctrl+N`) starts a fresh stack. There is no separate
+navigation toolbar or Settings tab.
+
+New stack names use lowercase hyphen-separated identifiers: both `arr-media`
+and `Arr Media` produce `arr-media`. This applies to previews, output paths,
+saved stacks, and library duplicates. Service identifiers remain unchanged.
+Existing saved stack names are not automatically renamed; when loading a legacy
+stack, its stored name is retained until you change its display name. Enter
+`arr-media` explicitly to rename a legacy `Arr Media`/`arr_media` definition;
+the old library entry and generated directory are not deleted automatically.
 
 ## Stack Monitoring
 
@@ -105,8 +118,8 @@ erasure). Locked checks run without stored credentials and may show authorizatio
 failures. **Lock vault** clears displayed results, but does not stop periodic
 unauthenticated checks. Wait for in-flight checks before locking or closing.
 The vault protects data at rest, not against malware or another process controlling
-your running account. Existing generated secret files and stack exports are
-unchanged; this feature does not yet move Docker secrets into the vault.
+your running account. Docker secret contents also use this vault; saved stack
+definitions and exports include secret names only, never their values.
 
 ## Project Structure
 
@@ -139,8 +152,10 @@ interactive credential prompts are disabled.
 
 Only files written by this generation are included in the commit, including new
 shared templates and `.gitkeep` files. Unrelated files and unrelated staged changes
-are left untouched. Existing secret files and shared templates are not rewritten
-or added; newly generated secret stubs are included unless ignored by Git.
+are left untouched. Existing shared templates are not rewritten or added.
+Encrypted `.age` secrets are generated from vault values; corresponding legacy
+plaintext files are deleted after successful encryption, and tracked deletions
+are included in the generated commit. Git ignore rules apply to new `.age` files.
 Git ignore rules are respected for untracked files. Review service configuration
 contents before generating: generated configuration files may contain sensitive data.
 Commits are clearly attributed, for example:
@@ -191,8 +206,13 @@ Imported files are saved with the stack, so the original files are not needed
 when generating the stack later or on another machine after importing that stack.
 
 Select a file to edit its UTF-8 text. Binary files are preserved without editing.
+The text editor uses a monospace font and syntax highlighting for common
+configuration syntax, including YAML/Jinja2, JSON, INI, and key/value settings.
 Double-click a file path to rename it or move it into a relative subdirectory.
-Use the Subdirectories list for additional folders, including empty ones.
+Set **Destination subdirectory** before importing or creating files to place
+them in a nested folder; parent directories are created automatically. The
+separate Subdirectories panel has been removed. Empty directories in previously
+saved definitions are still preserved when editing and generating those stacks.
 
 Generation writes files under `configs/<service-name>/` and creates their parent
 directories. For example, a Traefik service can contain `traefik.yml` alongside
@@ -207,6 +227,53 @@ and exports; do not import credentials that should instead be stored as secrets.
 
 Configuration files are not automatically mounted into containers. Add the
 appropriate config bind mounts in the service's **Volumes** tab.
+
+## Encrypted Docker Secrets
+
+In **Edit > Settings > Age encryption**, configure the **recipients / public key
+file** (default `~/.config/age/key.pub`) and **identity / private key file**
+(default `~/.config/age/key.pem`). Only file paths are saved in settings; keep the
+identity outside your stack repository. Install `age` on PATH. The recipients
+file is read with `age -R`, just like the shell script; it must contain supported
+age recipients, not arbitrary PEM certificate data. The identity is only needed
+when importing an encrypted `.age` file. Keys must be usable without interactive
+terminal prompts; failures are reported in the application.
+
+In a service's **Secrets** tab, add an extensionless secret name using letters,
+numbers, underscores, or hyphens, select it, and click **Set / edit value (vault)**.
+Unlock or create the existing master-password vault, then enter text or import a
+file. **Show / edit secret text** explicitly reveals the value for editing.
+Import supports plaintext files and `.age` files (decrypted using the configured
+identity). Imported bytes are preserved exactly unless you edit them as UTF-8;
+binary values can be imported and replaced without displaying them as text.
+
+Saving a value writes it immediately to the encrypted vault, independently of
+whether you later cancel the service dialog. **Values are shared globally by
+secret name**, across services, stacks, and environments: use different names
+when values must differ. Removing a name from a service does not delete the vault
+value. Use **Monitoring > View vault** to inspect, edit, or delete global secrets
+as well as monitoring credentials.
+
+Both generator and library generation prompt to unlock the vault if necessary.
+Missing or empty values block generation; no placeholders are generated. All
+values are encrypted in memory before stack generation writes any files, with
+plaintext passed to age through standard input, not a temporary file. Output is
+`secrets/<name>.age`, never `<name>.txt` or extensionless plaintext. Age encryption
+is randomized, so regenerating secrets can produce new ciphertext and commits
+even when values have not changed. The `secrets` directory gets a `.gitkeep` only
+when no secrets are configured.
+
+After replacement ciphertext files are successfully written, generation removes
+matching legacy `secrets/<name>` and `secrets/<name>.txt` files for the configured
+secrets. Unrelated files are not deleted. Imported source files elsewhere are not
+deleted either. **This does not erase plaintext from Git history or backups**;
+rotate any secret that was previously published. The application never puts
+vault contents or private keys in library exports or generated commits.
+Keep a secure separate backup of your vault, age identity, and master password.
+
+Compose continues to reference external Docker Swarm secrets by name. The
+deployment playbook must decrypt the `.age` files and create/update the external
+Swarm secrets; generation does not upload values directly to Docker.
 
 ## Semaphore Deployments
 
@@ -288,7 +355,7 @@ stacks/<env>/<stack-name>/
 │       ├── app.yml
 │       └── dynamic/
 │           └── routes.yml
-└── secrets/.gitkeep
+└── secrets/          # <name>.age files, or .gitkeep when no secrets are configured
 
 stacks/templates/      # shared Jinja snippets (created once, never overwritten)
 ├── common/logging.yml.j2
@@ -302,4 +369,30 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
 
 # Todo
 
-- [ ] Create a new branch named general-tweaks. I want the config files I add to be syntax highlighted aswell. Also the bottom "Subdirectories" part is a bit weird because we can already define the destination subdirectory up top. So a bit redundant and should go. Also the very top has "New Stack" - "Stack Library" - "Templates" - "Settings" buttons which is also redundant because we already have the row of tabs below it. Those need to go aswell. I can already access the settings in the edit menu so that is sufficient, don't create a settings tab to replace the button. To finnish off I need the tabs Deployments and Monitoring to have icons too like the other tabs.
+- [x] When I type arr-media to create a stack the stack name automatically turns into arr_media. Which is troublesome because my stack names need to use hyphens ("-"). So even when I name the stack Arr Media. The space should be a "-" not a "_"
+
+- [ ] Is it possible for services to find and suggest runtime directories? 
+Like for example stash would need runtime directories:  
+- stash/stash/generated
+- stash/stash/metadata
+- stash/stash/cache
+- stash/stash/blobs 
+ 
+  which are then used in the compose files volumes as:  
+
+- ${PATH_DOCKER_DATA}/${env}/stash/stash:/root/.stash
+- ${PATH_DOCKER_DATA}/${env}/stash/stash/generated:/generated
+- ${PATH_DOCKER_DATA}/${env}/stash/stash/metadata:/metadata
+- ${PATH_DOCKER_DATA}/${env}/stash/stash/cache:/cache
+- ${PATH_DOCKER_DATA}/${env}/stash/stash/blobs:/blobs
+
+At the moment I need to check out the documentation myself and check which ones I need to have.
+
+
+- [ ] When searching Docker Hub for an image for my service the image names in the list are cut off short. Sometime the name is cut off or the star number amount. It needs some more characters to be show.
+
+- [ ] I would like to edit services in the Stack Manager tab. I can see the services. I would only need to double click one and the same dialog could pop up like it does in the generator tab.
+
+- [ ] In the Stack manager tab I would like to be able to edit the stack by double clicking on the stack name in the right column.
+
+- [ ] In the Stack manager tab I would like to be able to create a new stack by clicking a button and opening a new dialog. This would also be the case when I go to file -> new.

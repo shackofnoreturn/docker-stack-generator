@@ -9,6 +9,7 @@ import re
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -52,6 +53,10 @@ from docker_stack_generator.generator import (
     validate_service_configs,
 )
 from docker_stack_generator.widgets import MetadataWorker, ProfileSelector, SearchWorker
+from docker_stack_generator.highlighter import ConfigFileHighlighter
+from docker_stack_generator.credential_vault import CredentialVault
+from docker_stack_generator.secret_widgets import edit_secret
+from docker_stack_generator.age_secrets import validate_secret_name
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +506,7 @@ class _EnvironmentEditor(QWidget):
 class _ConfigFilesEditor(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._config_directories: list[str] = []
         layout = QVBoxLayout(self)
         self._destination = QLabel("configs/<service>/")
         layout.addWidget(self._destination)
@@ -531,17 +537,18 @@ class _ConfigFilesEditor(QWidget):
         layout.addWidget(self._files, 1)
         self._contents = QTextEdit()
         self._contents.setAcceptRichText(False)
+        font = QFont("Monospace", 10)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self._contents.setFont(font)
+        self._contents.setStyleSheet(
+            "QTextEdit { background: #282c34; color: #abb2bf; }"
+        )
+        self._highlighter = ConfigFileHighlighter(self._contents.document())
         self._contents.setReadOnly(True)
         self._contents.setToolTip("UTF-8 text contents. Imported binary files are preserved without editing.")
         layout.addWidget(self._contents, 2)
         self._files.currentItemChanged.connect(self._show_contents)
         self._contents.textChanged.connect(self._update_contents)
-
-        directories = QGroupBox("Subdirectories")
-        directory_layout = QVBoxLayout(directories)
-        self._directories = _TagListEditor("e.g. dynamic or dynamic/middlewares", max_height=70)
-        directory_layout.addWidget(self._directories)
-        layout.addWidget(directories)
 
     def _append(self, path: str, contents: str):
         item = QListWidgetItem(path)
@@ -557,7 +564,7 @@ class _ConfigFilesEditor(QWidget):
         if path.casefold() in {entry.casefold() for entry in files}:
             raise ValueError(f"Configuration file already exists: {path}")
         encoded = base64.b64encode(contents).decode("ascii")
-        validate_service_configs({**files, path: encoded}, self._directories.values())
+        validate_service_configs({**files, path: encoded}, self._config_directories)
         self._files.setCurrentItem(self._append(path, encoded))
 
     def _import_files(self):
@@ -607,7 +614,7 @@ class _ConfigFilesEditor(QWidget):
         self._files.clear()
         for path, contents in files.items():
             self._append(path, contents)
-        self._directories.set_values(directories)
+        self._config_directories = list(directories)
 
     def values(self) -> tuple[dict[str, str], list[str]]:
         files = {}
@@ -617,7 +624,7 @@ class _ConfigFilesEditor(QWidget):
             if path in files:
                 raise ValueError(f"Duplicate configuration file: {path}")
             files[path] = item.data(Qt.ItemDataRole.UserRole)
-        directories = self._directories.values()
+        directories = list(self._config_directories)
         validate_service_configs(files, directories)
         return files, directories
 
@@ -670,8 +677,9 @@ class ServiceDialog(QDialog):
       - Placement constraint (role + label)
     """
 
-    def __init__(self, parent=None, existing: Optional[ServiceConfig] = None):
+    def __init__(self, parent=None, existing: Optional[ServiceConfig] = None, vault: Optional[CredentialVault] = None):
         super().__init__(parent)
+        self._vault = vault if vault is not None else CredentialVault()
         self.setWindowTitle("Add Service" if existing is None else "Edit Service")
         self.setMinimumSize(900, 640)
         self._existing = existing
@@ -941,23 +949,37 @@ class ServiceDialog(QDialog):
         secrets_group.setToolTip(
             "Docker Swarm secrets to mount into this service.\n"
             "They will appear in the service's secrets: block and in the global secrets: block.\n"
-            "Stub files will be written to secrets/<name>.txt on disk."
+            "Values are stored in the encrypted vault; only secrets/<name>.age is generated."
         )
         sl = QVBoxLayout(secrets_group)
         secrets_hint = QLabel(
             "<i>Enter a secret name, e.g. <b>my_api_token</b>. "
-            "Stub files are created under <code>secrets/</code>; "
-            "replace them with real values before deploying.</i>"
+            "Select a name and use <b>Set / edit value</b> to save its contents in the vault. "
+            "Values are shared globally by name. Only encrypted <code>&lt;name&gt;.age</code> "
+            "files are generated; missing or empty values block generation.</i>"
         )
         secrets_hint.setWordWrap(True)
         secrets_hint.setStyleSheet("color: #666; font-size: 11px;")
         sl.addWidget(secrets_hint)
         self._secrets_editor = _TagListEditor(placeholder="e.g. cloudflare_api_token", max_height=120)
         sl.addWidget(self._secrets_editor)
+        edit_value = QPushButton("Set / edit value (vault)")
+        edit_value.clicked.connect(self._edit_secret_value)
+        sl.addWidget(edit_value)
+        warning = QLabel("Removing a name unmounts it from this service; it does not delete its global vault value.")
+        warning.setWordWrap(True)
+        sl.addWidget(warning)
         layout.addWidget(secrets_group)
 
         layout.addStretch()
         return tab
+
+    def _edit_secret_value(self):
+        item = self._secrets_editor._list.currentItem()
+        if item is None:
+            QMessageBox.warning(self, "Secret", "Add and select a secret name first.")
+            return
+        edit_secret(self._vault, item.text(), self)
 
     # ------------------------------------------------------------------
     # Tab: Volumes
@@ -1241,6 +1263,8 @@ class ServiceDialog(QDialog):
         try:
             self._environment_editor.values()
             self._configs_editor.values()
+            for name in self._secrets_editor.values():
+                validate_secret_name(name)
         except ValueError as exc:
             QMessageBox.warning(self, "Validation", str(exc))
             return
@@ -1294,4 +1318,3 @@ class ServiceDialog(QDialog):
             config_files=config_files,
             config_directories=config_directories,
         )
-

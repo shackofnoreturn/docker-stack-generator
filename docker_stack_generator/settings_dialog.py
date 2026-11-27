@@ -61,6 +61,27 @@ class SettingsDialog(QDialog):
 
         tabs.addTab(paths_tab, "Paths")
 
+        age_tab = QWidget()
+        age_form = QFormLayout(age_tab)
+        self._age_recipients = QLineEdit()
+        self._age_identity = QLineEdit()
+        for label, editor in (("Age recipients / public key file:", self._age_recipients),
+                              ("Age identity / private key file:", self._age_identity)):
+            row = QHBoxLayout()
+            row.addWidget(editor)
+            browse = QPushButton("Browse...")
+            browse.clicked.connect(lambda _, field=editor: self._browse_age_file(field))
+            row.addWidget(browse)
+            age_form.addRow(label, row)
+        age_note = QLabel(
+            "Install the age command-line tool. Encryption uses the recipients file (-R); "
+            "the identity (-i) is used only when importing an encrypted .age file. "
+            "Only paths are saved here, not key contents. Secret values are stored in the encrypted vault."
+        )
+        age_note.setWordWrap(True)
+        age_form.addRow(age_note)
+        tabs.addTab(age_tab, "Age encryption")
+
         # --- Defaults tab ----------------------------------------------------
         defaults_tab = QWidget()
         df = QFormLayout(defaults_tab)
@@ -109,6 +130,8 @@ class SettingsDialog(QDialog):
     def _load(self):
         self._stacks_root.setText(settings.stacks_root)
         self._stacks_env.setText(settings.stacks_env)
+        self._age_recipients.setText(settings.get("age_recipients", "~/.config/age/key.pub"))
+        self._age_identity.setText(settings.get("age_identity", "~/.config/age/key.pem"))
         idx_map = {"low": 0, "medium": 1, "high": 2}
         self._default_restart.setCurrentIndex(
             idx_map.get(settings.get("default_restart_profile", "medium"), 1)
@@ -124,6 +147,8 @@ class SettingsDialog(QDialog):
             {
                 "stacks_root": self._stacks_root.text().strip(),
                 "stacks_env": self._stacks_env.text().strip() or "development",
+                "age_recipients": self._age_recipients.text().strip(),
+                "age_identity": self._age_identity.text().strip(),
                 "default_restart_profile": self._default_restart.currentData(),
                 "default_resource_profile": self._default_resource.currentData(),
                 "network_traefik": self._net_traefik.text().strip() or "NETWORK_TRAEFIK",
@@ -131,3 +156,8 @@ class SettingsDialog(QDialog):
             }
         )
         self.accept()
+
+    def _browse_age_file(self, editor):
+        path, _ = QFileDialog.getOpenFileName(self, "Select age key file", editor.text())
+        if path:
+            editor.setText(path)

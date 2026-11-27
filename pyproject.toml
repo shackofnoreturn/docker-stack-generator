@@ -1,6 +1,6 @@
 [project]
 name = "docker-stack-generator"
-version = "1.4.0"
+version = "1.5.0"
 description = "GUI tool to scaffold Docker Swarm stack files"
 requires-python = ">=3.11"
 dependencies = [
