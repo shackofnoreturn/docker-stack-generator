@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QInputDialog,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -160,6 +161,7 @@ class MainWindow(QMainWindow):
         self._stack_library_widget.load_requested.connect(self._load_from_library)
         self._stack_library_widget.generate_requested.connect(self._generate_from_library)
         self._stack_library_widget.edit_service_requested.connect(self._edit_library_service)
+        self._stack_library_widget.edit_stack_requested.connect(self._edit_library_stack)
         self._tabs.addTab(self._stack_library_widget, "📚  Stack Library")
 
         # ---- Tab 3: Template Library ---------------------------------------
@@ -454,6 +456,37 @@ class MainWindow(QMainWindow):
         self._status.showMessage(
             f"Saved service '{updated.display_name}' in '{saved.config.display_name}'."
         )
+
+    def _edit_library_stack(self, saved: SavedStack):
+        display_name, accepted = QInputDialog.getText(
+            self,
+            "Edit Stack Name",
+            "Stack name:",
+            text=saved.config.display_name,
+        )
+        if not accepted:
+            return
+
+        display_name = display_name.strip()
+        name = stack_slugify(display_name)
+        if not name:
+            QMessageBox.warning(self, "Validation", "Please enter a valid stack name.")
+            return
+
+        cfg = deepcopy(saved.config)
+        cfg.display_name = display_name
+        cfg.name = name
+        renamed = stack_library.rename_stack(saved.key, cfg)
+        if renamed is None:
+            QMessageBox.warning(
+                self,
+                "Stack name unavailable",
+                "A stack with that name already exists, or the selected stack was removed.",
+            )
+            return
+
+        self._stack_library_widget.refresh(select_key=renamed.key)
+        self._status.showMessage(f"Renamed stack to '{renamed.config.display_name}'.")
 
     def _remove_service(self):
         idx = self._services_list.currentRow()

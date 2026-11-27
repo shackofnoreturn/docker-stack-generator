@@ -73,6 +73,44 @@ class LibraryGenerationTests(unittest.TestCase):
 
         requested.assert_called_once_with(self.saved, 0)
 
+    def test_double_clicking_stack_title_requests_edit_for_selected_stack(self):
+        from docker_stack_generator.stack_library_widget import StackLibraryWidget
+
+        widget = StackLibraryWidget()
+        self.addCleanup(widget.deleteLater)
+        widget._show_entry(self.saved)
+        requested = Mock()
+        widget.edit_stack_requested.connect(requested)
+
+        widget._detail_title.double_clicked.emit()
+
+        requested.assert_called_once_with(self.saved)
+
+    def test_accepted_stack_name_edit_rekeys_library_entry(self):
+        from copy import deepcopy
+
+        renamed = SavedStack(
+            "production__changed-name",
+            StackConfig("changed-name", "Changed Name", "production", "saved-root"),
+        )
+        self.window._stack_library_widget.refresh = Mock()
+        with patch(
+            "docker_stack_generator.main_window.QInputDialog.getText",
+            return_value=("Changed Name", True),
+        ), patch(
+            "docker_stack_generator.main_window.stack_library.rename_stack",
+            return_value=renamed,
+        ) as rename:
+            self.window._edit_library_stack(self.saved)
+
+        cfg = rename.call_args.args[1]
+        self.assertIsNot(cfg, self.saved.config)
+        self.assertEqual(cfg.name, "changed-name")
+        self.assertEqual(cfg.display_name, "Changed Name")
+        self.assertEqual(self.saved.config.name, "demo")
+        rename.assert_called_once_with(self.saved.key, cfg)
+        self.window._stack_library_widget.refresh.assert_called_once_with(select_key=renamed.key)
+
     def test_accepted_library_service_edit_saves_copy_and_refreshes(self):
         from docker_stack_generator.generator import StackConfig
 
