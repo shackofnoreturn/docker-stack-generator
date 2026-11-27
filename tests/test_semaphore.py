@@ -160,26 +160,26 @@ class DeploymentWidgetTests(unittest.TestCase):
         self.widget = DeploymentWidget()
         self.addCleanup(self.widget.close)
         self.addCleanup(self.widget._poll.stop)
-        self.addCleanup(self.widget._health_timer.stop)
 
     def record(self):
         return {"server": "https://semaphore.example", "project": 1, "template": 41,
                 "stack": "traefik", "environment": "development", "action": "Deploy", "id": 7, "status": "running"}
 
-    def test_success_queues_health_checks_and_remembers_task(self):
+    def test_success_stops_task_polling_and_remembers_output(self):
         self.widget._started(self.record(), {"id": 7, "status": "running"})
+        self.widget._pending = None
         self.widget._snapshot({"task": {"status": "success"}, "output": "ok=1 failed=0", "warning": ""})
         self.assertFalse(self.widget._poll.isActive())
-        self.assertEqual(self.widget._pending, self.widget._start_health)
+        self.assertIsNone(self.widget._pending)
         self.assertEqual(self.values["semaphore_history"][0]["status"], "success")
         self.assertIn("ok=1", self.widget._output.toPlainText())
 
-    def test_pause_does_not_restart_health_after_inflight_success(self):
+    def test_pause_does_not_restart_polling_after_inflight_success(self):
         self.widget._active = self.record()
         self.widget._pause()
         self.widget._snapshot({"task": {"status": "success"}, "output": "", "warning": ""})
         self.assertIsNone(self.widget._pending)
-        self.assertFalse(self.widget._health_timer.isActive())
+        self.assertFalse(self.widget._poll.isActive())
 
     def test_repeated_poll_failure_pauses_monitoring(self):
         self.widget._active = self.record()
@@ -199,17 +199,35 @@ class DeploymentWidgetTests(unittest.TestCase):
         self.assertNotIn("do-not-store", json.dumps(self.values))
         self.assertNotIn("private-token", json.dumps(self.values))
 
-    def test_endpoint_edits_survive_stack_selection(self):
-        self.widget._stack.setCurrentText("first")
-        self.widget._stack_changed()
-        self.widget._endpoints.setPlainText("first=https://first.example")
-        self.widget._stack.setCurrentText("second")
-        self.widget._stack_changed()
-        self.widget._stack.setCurrentText("first")
-        self.widget._stack_changed()
-        self.assertEqual(self.widget._endpoints.toPlainText(), "first=https://first.example")
+    def test_execution_output_uses_remaining_layout_space_without_health_panel(self):
+        from PyQt6.QtWidgets import QPlainTextEdit, QSplitter
+        layout = self.widget.layout()
+        output_index = layout.count() - 1
+        self.assertIs(layout.itemAt(output_index).widget(), self.widget._output)
+        self.assertEqual(layout.stretch(output_index), 1)
+        self.assertEqual(self.widget.findChildren(QPlainTextEdit), [self.widget._output])
+        self.assertEqual(self.widget.findChildren(QSplitter), [])
+        self.assertFalse(hasattr(self.widget, "_health_timer"))
+
+    def test_resume_task_keeps_status_polling_and_output(self):
+        record = self.record()
+        self.widget._url.setText(record["server"])
+        self.widget._output.setPlainText("Previous task output")
+        with patch.object(self.widget, "_new_client"), patch.object(self.widget, "_refresh_task") as refresh:
+            self.widget._resume_record(record)
+        self.assertTrue(self.widget._poll.isActive())
+        self.assertEqual(self.widget._active["id"], record["id"])
+        self.assertEqual(self.widget._output.toPlainText(), "")
+        refresh.assert_called_once()
+
+    def test_close_preserves_old_endpoint_settings_without_using_them(self):
+        self.values["semaphore_endpoints"] = {"development/traefik": "https://old.example"}
+        self.values["semaphore_domain"] = "old.example"
+        self.assertTrue(self.widget.prepare_close())
+        self.assertEqual(self.values["semaphore_endpoints"],
+                         {"development/traefik": "https://old.example"})
+        self.assertEqual(self.values["semaphore_domain"], "old.example")
 
 
 if __name__ == "__main__":
     unittest.main()
-

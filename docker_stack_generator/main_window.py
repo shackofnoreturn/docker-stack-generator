@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
 
 from docker_stack_generator.config import settings
 from docker_stack_generator.deployment_widget import DeploymentWidget
+from docker_stack_generator.monitoring_widget import MonitoringWidget
 from docker_stack_generator.generator import (
     GenerationError,
     ServiceConfig,
@@ -195,8 +196,13 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._tpl_manager, "📂  Template Library")
         self._deployment_widget = DeploymentWidget()
         self._tabs.addTab(self._deployment_widget, "Deployments")
+        self._monitoring_widget = MonitoringWidget()
+        self._tabs.addTab(self._monitoring_widget, "Monitoring")
         self._tabs.currentChanged.connect(
             lambda index: self._deployment_widget.refresh_stacks() if index == 3 else None
+        )
+        self._tabs.currentChanged.connect(
+            lambda index: self._monitoring_widget.refresh_stacks() if index == 4 else None
         )
 
         self._tabs.currentChanged.connect(self._on_main_tab_changed)
@@ -778,9 +784,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Generation in progress", "Wait for generation and repository sync to finish before closing.")
             event.ignore()
             return
-        if not self._deployment_widget.prepare_close():
+        if not self._monitoring_widget.prepare_close() or not self._deployment_widget.prepare_close():
             event.ignore()
             return
+        self._monitoring_widget.shutdown()
         settings.set("window_geometry", bytes(self.saveGeometry().toHex()).decode("ascii"))
         super().closeEvent(event)
 

@@ -15,9 +15,10 @@ A Python GUI application to scaffold Docker Swarm stack files
 - **Traefik labels** — per-service tab with service-based router, hostname, backend port variable, and editable routing settings
 - **Homepage labels** — per-service tab with customizable group, name, icon, URL, and description
 - **Service configuration files** — import or create files, edit UTF-8 text, and add nested subdirectories under `configs/<service>/`
-- **Semaphore deployments** - launch configured playbooks, monitor task status and output, resume saved runs, and check service endpoint reachability
+- **Semaphore deployments** - launch configured playbooks, monitor task status and execution output, and resume saved runs
 - **Preview** — live `stack.yml` and `compose.yml.j2` preview before writing any files
 - **Generate & Sync** — generate a stack, commit generated files in the destination repository, and push to its upstream branch
+- **Stack monitoring** - periodically check HTTP(S) endpoints for saved stacks and services, with encrypted per-service authentication
 - **Recent stacks** — quick access to previously generated stacks
 - **Same output format** as the original `new-stack.sh`
 
@@ -26,6 +27,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 - Python 3.11+
 - `python-pyqt6` (install via `sudo pacman -S python-pyqt6` on Arch)
 - `requests`, `PyYAML`, and `Jinja2`
+- `cryptography` (encrypted local credential vault)
 
 ## Usage
 
@@ -41,6 +43,70 @@ python -m docker_stack_generator
 In VS Code, use **Terminal > Run Task > Install prerequisites** to install the
 application and its declared dependencies into the `python` environment on your PATH.
 Use **Run application** to launch the GUI from the workspace directory.
+
+## Stack Monitoring
+
+Open **Monitoring** to see all stacks and services saved in **Stack Library**,
+across environments. Save or import stack definitions first; this is not a Docker
+Swarm inventory connection and does not inspect containers, replica counts, or
+stacks that exist only on disk. **Refresh stacks** picks up library changes.
+
+Endpoints default to `https://<service-name>.<domain>` once you enter the domain.
+Homepage URLs and simple Traefik `Host` rules take precedence when configured.
+Automatically derived URLs follow domain changes; saved endpoint overrides remain
+unchanged. Set the domain field to resolve `${DOMAIN}`, or select a service and use
+**Edit endpoint** (also available by double-clicking). Use a dedicated health URL
+where possible (for example, add `/dashboard/` for Traefik). Explicitly saved
+blank endpoints disable that service's check and keep the stack
+incomplete rather than falsely healthy. URLs and polling preferences are stored
+locally in `~/.config/docker-stack-generator/monitoring.json`; do not put passwords
+or tokens in URL paths or query strings.
+
+**Check now** runs one check of all services. **Start monitoring** repeats checks
+while the application is open, including when another tab is selected, at the
+configured interval (10-3600 seconds). Automatic monitoring is paused on launch.
+Checks do not overlap. The tree shows each service's result, timestamp, and an
+aggregate stack state; a stack is healthy only when all its services return 2xx.
+HTTP errors, network/TLS errors, redirects, authorization failures, missing
+endpoints, and unchecked services are distinguished. Redirects are not followed:
+configure their final health URL instead. A 2xx login page cannot prove that the
+underlying application works, so use an appropriate authenticated health endpoint.
+TLS verification stays enabled; implicit `.netrc` credentials and environment
+proxy settings are not used by monitoring.
+
+For HTTP 401/403, select the service and choose **Set credentials / retry**.
+Basic authentication and bearer tokens are supported (not browser/SSO form login).
+Credentials are sent only over HTTPS, only to the exact endpoint they were saved
+for; changing that URL requires configuring credentials again. Saving credentials
+immediately retries checks. **Remove credentials** deletes the selected endpoint's
+credential. Endpoint changes leave the old encrypted credential unused; use
+**View vault** to inspect or delete it without restoring the old URL.
+
+### Encrypted credential vault
+
+**Unlock / create vault** creates or unlocks the application's local encrypted
+vault at `~/.config/docker-stack-generator/credentials.vault`. On creation choose
+and confirm a master password of at least 12 characters. The password is not saved
+and must be entered after each application launch. **There is no password recovery**:
+keep a secure backup of both your vault and master password. Library backups and
+exports do not include the vault or monitoring preferences.
+
+**View vault** prompts for the master password if locked and lists all stored
+entries, including credentials for old endpoints. Select an entry to inspect its
+username and masked password/token. Use **Show password / token** to explicitly
+reveal it, **Edit credentials** to update it, or **Delete entry** to remove it
+after confirmation. Monitoring checks pause while the vault viewer is open;
+closing it clears displayed secrets and invalidates previous monitoring results.
+
+The vault uses authenticated encryption with a salted password-derived key.
+Credentials are decrypted in memory only while unlocked; locking or closing drops
+the application's key and credential references (Python cannot guarantee memory
+erasure). Locked checks run without stored credentials and may show authorization
+failures. **Lock vault** clears displayed results, but does not stop periodic
+unauthenticated checks. Wait for in-flight checks before locking or closing.
+The vault protects data at rest, not against malware or another process controlling
+your running account. Existing generated secret files and stack exports are
+unchanged; this feature does not yet move Docker secrets into the vault.
 
 ## Project Structure
 
@@ -194,34 +260,19 @@ playbook. Monitoring also pauses after 30 minutes or five consecutive polling
 errors; **Refresh task** reconnects and resumes it. Closing the app leaves remote
 tasks running. Wait for in-flight network requests to finish before closing.
 
-### Service Reachability
-
-Endpoint checks run after a successful **Deploy** action when enabled, or via
-**Check services**. Saved service Homepage URLs are suggested automatically;
-default Traefik URLs are suggested where no custom router rule is present.
-Otherwise enter one HTTP(S) URL per line, optionally as `service=https://host/health`.
-Set **DOMAIN** to resolve `${DOMAIN}` in suggested URLs. Endpoint lists are saved
-per environment/stack. Non-HTTP services need an appropriate HTTP health endpoint
-or separate checks in the playbook.
-
-Checks retry every ten seconds for approximately three minutes while services
-start. The table distinguishes successful HTTP responses, authentication-required
-responses, redirects with unverified destinations, TLS errors, HTTP errors, and
-connection/DNS/timeout failures. You can pause checks, adjust URLs, and retry.
-
-These are checks **from the machine running this app**, not from inside the Swarm.
-A reachable endpoint does not verify replica counts, container health, or application
-correctness, and a successful playbook does not guarantee endpoint readiness.
-Prefer service-specific health URLs; use the playbook output and Semaphore task
-details for deployment diagnostics. No live Swarm inspection is performed.
+Service endpoint checks are managed exclusively in the main **Monitoring** tab.
+Deployments does not run automatic service checks after a successful playbook;
+its remaining space is dedicated to Semaphore execution output. A successful
+playbook does not guarantee service health. Use **Monitoring** to check service
+endpoints independently.
 
 ### Additional Playbooks
 
 Targets can also map actions such as **Remove**, **Backup**, **Restore**, or **Move**
 to your own Semaphore templates, with extra survey variables for their inputs.
 Every action requires confirmation and uses the same status/log monitoring.
-Only actions named **Deploy** start automatic endpoint checks. The application
-does not supply these playbooks or implement backup/restore semantics itself.
+The application does not supply these playbooks or implement backup/restore
+semantics itself.
 
 ## Generated Output
 
