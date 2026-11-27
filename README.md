@@ -6,7 +6,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 
 - **GUI interface** — no more interactive terminal prompts
 - **Stack description** — enter a human-readable description that is written directly into `README.md`
-- **Runtime directories** — define per-service runtime directories in the service dialog; they are collected into `runtime_directories` in `stack.yml` as `<stack>/<service>` or `<stack>/<service>/<subdir>` paths
+- **Runtime directories** — define per-service runtime directories in the service dialog, or suggest them from image-declared Docker Hub volumes; suggestions also add matching writable data mounts under `<stack>/<service>/...` to the Compose output
 - **Persistent settings** — stacks root, environment, network variables, and profile defaults are saved across sessions
 - **Docker Hub search** — search images in-app with star counts and descriptions
 - **Automatic metadata** — fetches exposed ports, OS, architecture, image layers from Docker Hub without pulling images

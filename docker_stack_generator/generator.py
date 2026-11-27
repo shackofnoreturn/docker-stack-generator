@@ -35,10 +35,12 @@ class VolumeMount:
     #   socket → literal host_path:container_path[:options]
     #   config → ${PATH_DOCKER_STACKS}/${env}/<host_subpath>:<container_path>[:ro]
     #   data   → ${PATH_DOCKER_DATA}/${env}/<host_subpath>:<container_path>
+    #   runtime data → ${PATH_DOCKER_DATA}/${env}/<stack>/<service>/<host_path>
     kind: str           # "socket" | "config" | "data"
     host_path: str      # literal path (socket) or subpath under base var (config/data)
     container_path: str # path inside the container
     read_only: bool = True  # :ro suffix for socket/config; data defaults to False but user can set
+    runtime_dir: bool = False  # data path is under <stack>/<service>/
 
 
 @dataclass
@@ -140,6 +142,27 @@ def split_image(image: str) -> tuple[str, str]:
 
 def _env_prefix(service_name: str) -> str:
     return service_name.upper().replace("-", "_")
+
+
+def runtime_directory_suggestions(metadata: dict) -> list[tuple[str, str]]:
+    """Return safe host subdirectories and container targets from image volumes."""
+    volumes = metadata.get("volumes")
+    if not isinstance(volumes, dict):
+        return []
+
+    suggestions = []
+    for container_path in volumes:
+        if not isinstance(container_path, str) or not container_path.startswith("/"):
+            continue
+        parts = container_path.split("/")[1:]
+        if not parts or any(part in ("", ".", "..") for part in parts):
+            continue
+        if any(not re.fullmatch(r"[A-Za-z0-9._-]+", part) for part in parts):
+            continue
+        suggestion = ("/".join(parts), container_path)
+        if suggestion not in suggestions:
+            suggestions.append(suggestion)
+    return suggestions
 
 
 def traefik_label_defaults(name: str) -> dict[str, str]:
@@ -288,8 +311,11 @@ def generate_compose_j2(cfg: StackConfig) -> str:
                         f"      - ${{PATH_DOCKER_STACKS}}/${{env}}/{vm.host_path}:{vm.container_path}{ro_suffix}"
                     )
                 else:  # data
+                    host_path = vm.host_path
+                    if vm.runtime_dir:
+                        host_path = f"{cfg.name}/{svc.name}/{host_path}"
                     lines.append(
-                        f"      - ${{PATH_DOCKER_DATA}}/${{env}}/{vm.host_path}:{vm.container_path}{ro_suffix}"
+                        f"      - ${{PATH_DOCKER_DATA}}/${{env}}/{host_path}:{vm.container_path}{ro_suffix}"
                     )
 
         # Secrets

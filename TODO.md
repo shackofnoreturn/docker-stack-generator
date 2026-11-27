@@ -3,7 +3,7 @@
 - [x] When I type arr-media to create a stack the stack name automatically turns into arr_media. Which is troublesome because my stack names need to use hyphens ("-"). So even when I name the stack Arr Media. The space should be a "-" not a "_"
 
 
-- [ ] Is it possible for services to find and suggest runtime directories? 
+- [x] Is it possible for services to find and suggest runtime directories?
 Like for example stash would need runtime directories:  
 - stash/stash/generated
 - stash/stash/metadata
@@ -18,9 +18,16 @@ Like for example stash would need runtime directories:
 - ${PATH_DOCKER_DATA}/${env}/stash/stash/blobs:/blobs
 
 At the moment I need to check out the documentation myself and check which ones I need to have.
+Image-declared Docker Hub volumes can now be suggested as runtime directories and matching data mounts.
+
+
+- [ ] Make a vscode task which installs a shortcut on my omarchy machine so I can run it by going to the applications menu. Also make sure it has an icon. 
 
 
 - [ ] When searching Docker Hub for an image for my service the image names in the list are cut off short. Sometime the name is cut off or the star number amount. It needs some more characters to be show.
+
+
+- [ ] When scrolling through Docker Hub images I would like to be able to sort by different criteria.
 
 
 - [ ] I would like to edit services in the Stack Manager tab. I can see the services. I would only need to double click one and the same dialog could pop up like it does in the generator tab.
