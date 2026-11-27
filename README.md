@@ -51,10 +51,13 @@ across environments. Save or import stack definitions first; this is not a Docke
 Swarm inventory connection and does not inspect containers, replica counts, or
 stacks that exist only on disk. **Refresh stacks** picks up library changes.
 
-Homepage URLs and simple Traefik `Host` rules provide suggested endpoints.
-Set the domain field to resolve `${DOMAIN}`, or select a service and use
+Endpoints default to `https://<service-name>.<domain>` once you enter the domain.
+Homepage URLs and simple Traefik `Host` rules take precedence when configured.
+Automatically derived URLs follow domain changes; saved endpoint overrides remain
+unchanged. Set the domain field to resolve `${DOMAIN}`, or select a service and use
 **Edit endpoint** (also available by double-clicking). Use a dedicated health URL
-where possible. Blank endpoints disable that service's check and keep the stack
+where possible (for example, add `/dashboard/` for Traefik). Explicitly saved
+blank endpoints disable that service's check and keep the stack
 incomplete rather than falsely healthy. URLs and polling preferences are stored
 locally in `~/.config/docker-stack-generator/monitoring.json`; do not put passwords
 or tokens in URL paths or query strings.
@@ -76,8 +79,8 @@ Basic authentication and bearer tokens are supported (not browser/SSO form login
 Credentials are sent only over HTTPS, only to the exact endpoint they were saved
 for; changing that URL requires configuring credentials again. Saving credentials
 immediately retries checks. **Remove credentials** deletes the selected endpoint's
-credential. Endpoint changes leave the old encrypted credential unused; to remove
-it, temporarily restore the old endpoint and use **Remove credentials**.
+credential. Endpoint changes leave the old encrypted credential unused; use
+**View vault** to inspect or delete it without restoring the old URL.
 
 ### Encrypted credential vault
 
@@ -87,6 +90,13 @@ and confirm a master password of at least 12 characters. The password is not sav
 and must be entered after each application launch. **There is no password recovery**:
 keep a secure backup of both your vault and master password. Library backups and
 exports do not include the vault or monitoring preferences.
+
+**View vault** prompts for the master password if locked and lists all stored
+entries, including credentials for old endpoints. Select an entry to inspect its
+username and masked password/token. Use **Show password / token** to explicitly
+reveal it, **Edit credentials** to update it, or **Delete entry** to remove it
+after confirmation. Monitoring checks pause while the vault viewer is open;
+closing it clears displayed secrets and invalidates previous monitoring results.
 
 The vault uses authenticated encryption with a salted password-derived key.
 Credentials are decrypted in memory only while unlocked; locking or closing drops

@@ -1,10 +1,12 @@
 """Stack and service endpoint monitoring with encrypted per-service credentials."""
 from __future__ import annotations
 
+import json
+
 from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QHeaderView,
     QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -79,10 +81,128 @@ class _CredentialDialog(QDialog):
             return {"kind": "basic", "username": self.username.text(), "password": self.password.text()}
         return {"kind": "bearer", "token": self.token.text()}
 
+    def set_value(self, value):
+        self.kind.setCurrentIndex(1 if value.get("kind") == "bearer" else 0)
+        self.username.setText(value.get("username", ""))
+        self.password.setText(value.get("password", ""))
+        self.token.setText(value.get("token", ""))
+
     def clear(self):
         self.username.clear()
         self.password.clear()
         self.token.clear()
+
+
+class _VaultDialog(QDialog):
+    def __init__(self, vault: CredentialVault, parent=None):
+        super().__init__(parent)
+        self._vault = vault
+        self.setWindowTitle("Credential vault")
+        self.resize(820, 420)
+        layout = QVBoxLayout(self)
+        self._entries = QTreeWidget()
+        self._entries.setHeaderLabels(["Stack", "Service", "Endpoint"])
+        self._entries.currentItemChanged.connect(self._selection_changed)
+        layout.addWidget(self._entries)
+        self._username = QLineEdit()
+        self._username.setReadOnly(True)
+        self._secret = QLineEdit()
+        self._secret.setReadOnly(True)
+        self._secret.setEchoMode(QLineEdit.EchoMode.Password)
+        self._reveal = QCheckBox("Show password / token")
+        self._reveal.toggled.connect(
+            lambda visible: self._secret.setEchoMode(
+                QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password)
+        )
+        form = QFormLayout()
+        form.addRow("Username / authentication", self._username)
+        form.addRow("Password / token", self._secret)
+        form.addRow(self._reveal)
+        layout.addLayout(form)
+        actions = QHBoxLayout()
+        self._edit = QPushButton("Edit credentials")
+        self._edit.clicked.connect(self._edit_entry)
+        self._delete = QPushButton("Delete entry")
+        self._delete.clicked.connect(self._delete_entry)
+        actions.addWidget(self._edit)
+        actions.addWidget(self._delete)
+        layout.addLayout(actions)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._reload()
+
+    def _reload(self):
+        self._entries.clear()
+        for key in self._vault.keys():
+            try:
+                parts = json.loads(key)
+            except ValueError:
+                parts = None
+            if (isinstance(parts, list) and len(parts) == 4 and parts[0] == "monitoring"
+                    and all(isinstance(part, str) for part in parts)):
+                labels = parts[1:]
+            else:
+                labels = [key, "", ""]
+            row = QTreeWidgetItem(labels)
+            row.setData(0, Qt.ItemDataRole.UserRole, key)
+            self._entries.addTopLevelItem(row)
+        self._selection_changed()
+
+    def _key(self):
+        row = self._entries.currentItem()
+        return row.data(0, Qt.ItemDataRole.UserRole) if row else None
+
+    def _selection_changed(self, *_):
+        self.clear()
+        key = self._key()
+        self._edit.setEnabled(key is not None)
+        self._delete.setEnabled(key is not None)
+        if key is not None:
+            value = self._vault.get(key)
+            if value is not None:
+                self._username.setText(value.get("username", value.get("kind", "")))
+                self._secret.setText(value.get("password", value.get("token", "")))
+
+    def _edit_entry(self):
+        key = self._key()
+        if key is None:
+            return
+        dialog = _CredentialDialog(self)
+        try:
+            value = self._vault.get(key)
+            if value is None:
+                raise VaultError("The credential entry no longer exists.")
+            if value.get("kind") not in ("basic", "bearer"):
+                raise VaultError("This entry is not a supported monitoring credential.")
+            dialog.set_value(value)
+            if dialog.exec():
+                self._vault.set(key, dialog.value())
+                self._selection_changed()
+        except VaultError as exc:
+            QMessageBox.warning(self, "Credential vault", str(exc))
+        finally:
+            dialog.clear()
+            dialog.deleteLater()
+
+    def _delete_entry(self):
+        key = self._key()
+        if key is None:
+            return
+        if QMessageBox.question(self, "Delete credential", "Permanently delete the selected credential?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._vault.delete(key)
+            self._reload()
+        except VaultError as exc:
+            QMessageBox.warning(self, "Credential vault", str(exc))
+
+    def clear(self):
+        self._username.clear()
+        self._secret.clear()
+        self._reveal.setChecked(False)
 
 
 class MonitoringWidget(QWidget):
@@ -142,7 +262,9 @@ class MonitoringWidget(QWidget):
         self._unlock.clicked.connect(self._unlock_vault)
         self._lock = QPushButton("Lock vault")
         self._lock.clicked.connect(self._lock_vault)
-        for widget in (self._endpoint, self._credentials, self._remove, self._unlock, self._lock):
+        self._view_vault = QPushButton("View vault")
+        self._view_vault.clicked.connect(self._show_vault)
+        for widget in (self._endpoint, self._credentials, self._remove, self._unlock, self._view_vault, self._lock):
             actions.addWidget(widget)
         layout.addLayout(actions)
         self._tree.itemSelectionChanged.connect(self._selection_changed)
@@ -301,6 +423,24 @@ class MonitoringWidget(QWidget):
         self._render()
         self._state.setText("Vault locked. Future checks run without stored credentials.")
 
+    def _show_vault(self):
+        if self._worker is not None or not self._unlock_vault():
+            return
+        self._editing = True
+        dialog = None
+        try:
+            dialog = _VaultDialog(self._vault, self)
+            dialog.exec()
+        except VaultError as exc:
+            QMessageBox.warning(self, "Credential vault", str(exc))
+        finally:
+            self._editing = False
+            if dialog is not None:
+                dialog.clear()
+                dialog.deleteLater()
+            self._results.clear()
+            self._render()
+
     def _set_credentials(self):
         target = self._selected()
         if target is None or self._worker is not None:
@@ -381,7 +521,7 @@ class MonitoringWidget(QWidget):
 
     def _set_busy(self, busy):
         for widget in (self._check, self._refresh, self._endpoint, self._credentials,
-                       self._remove, self._lock, self._unlock, self._domain, self._interval):
+                       self._remove, self._lock, self._unlock, self._view_vault, self._domain, self._interval):
             widget.setEnabled(not busy)
         if not busy:
             self._selection_changed()

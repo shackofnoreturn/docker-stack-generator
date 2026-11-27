@@ -58,6 +58,21 @@ def test_updates_deletes_copies_and_reopen(vault):
     assert vault.get("other") == {"token": "replacement"}
 
 
+def test_list_keys_requires_unlock_and_returns_independent_list(vault):
+    with pytest.raises(VaultError, match="locked"):
+        vault.keys()
+    vault.unlock(PASSWORD)
+    vault.set("second", {"token": "two"})
+    vault.set("first", {"token": "one"})
+    keys = vault.keys()
+    assert keys == ["first", "second"]
+    keys.clear()
+    assert vault.keys() == ["first", "second"]
+    vault.lock()
+    with pytest.raises(VaultError, match="locked"):
+        vault.keys()
+
+
 def test_disk_contains_no_plaintext_and_wrong_password_stays_locked(vault):
     vault.unlock(PASSWORD)
     vault.set("private-registry", {"username": "secret-user", "password": "secret-password"})

@@ -47,7 +47,7 @@ class MonitoringTests(unittest.TestCase):
         urls = {(target.stack, target.service): target.url for target in targets}
         self.assertEqual(urls[("production/demo", "web")], "https://web.example.test/health")
         self.assertEqual(urls[("production/demo", "proxy")], "https://proxy.example.test")
-        self.assertEqual(urls[("testing/demo", "redis")], "")
+        self.assertEqual(urls[("testing/demo", "redis")], "https://redis.example.test")
         self.assertEqual(len({target.key for target in targets}), 4)
         key = MonitorTarget("production/demo", "web", "").key
         edited = discover_targets(entries, {key: ""}, "example.test")
@@ -57,7 +57,20 @@ class MonitoringTests(unittest.TestCase):
         service = make_service()
         service.traefik = {"rule": "Host(`one`) || Host(`two`)"}
         entries = [SavedStack("one", StackConfig("demo", "Demo", "production", "", services=[service]))]
-        self.assertEqual(discover_targets(entries, {}, "")[0].url, "")
+        self.assertEqual(discover_targets(entries, {}, "")[0].url, "https://redis.${DOMAIN}")
+
+    def test_domain_defaults_update_without_overwriting_custom_endpoints(self):
+        service = make_service()
+        entries = [SavedStack("one", StackConfig("demo", "Demo", "production", "", services=[service]))]
+        initial = discover_targets(entries, {}, "")[0]
+        self.assertEqual(check_target(initial).state, "Invalid endpoint")
+        generated = discover_targets(entries, {}, "dev.example.test")[0]
+        self.assertEqual(generated.url, "https://redis.dev.example.test")
+        self.assertEqual(discover_targets(entries, {}, "prod.example.test")[0].url,
+                         "https://redis.prod.example.test")
+        custom = {generated.key: "https://redis.dev.example.test/dashboard/"}
+        self.assertEqual(discover_targets(entries, custom, "prod.example.test")[0].url,
+                         custom[generated.key])
 
     def test_endpoint_validation_and_credential_binding(self):
         for value in ("ftp://host", "https://", "https://user:pass@host", "https://host/#part",
@@ -335,6 +348,80 @@ class MonitoringWidgetTests(unittest.TestCase):
         with patch("docker_stack_generator.monitoring_widget._MonitorWorker") as worker:
             self.widget.check_now()
         worker.assert_not_called()
+
+    def test_vault_viewer_masks_reveals_and_clears_credentials(self):
+        from PyQt6.QtWidgets import QLineEdit
+        from docker_stack_generator.monitoring_widget import _VaultDialog
+        target = self.widget._targets[0]
+        self.vault.keys.return_value = [target.credential_key]
+        self.vault.get.return_value = {"kind": "basic", "username": "alice", "password": "private"}
+        dialog = _VaultDialog(self.vault)
+        try:
+            row = dialog._entries.topLevelItem(0)
+            self.assertEqual(row.text(2), target.url)
+            dialog._entries.setCurrentItem(row)
+            self.assertEqual(dialog._secret.text(), "private")
+            self.assertEqual(dialog._secret.echoMode(), QLineEdit.EchoMode.Password)
+            dialog._reveal.setChecked(True)
+            self.assertEqual(dialog._secret.echoMode(), QLineEdit.EchoMode.Normal)
+            dialog.clear()
+            self.assertEqual(dialog._secret.text(), "")
+            self.assertFalse(dialog._reveal.isChecked())
+        finally:
+            dialog.deleteLater()
+
+    def test_view_vault_unlocks_and_pauses_checks_while_open(self):
+        self.vault.unlocked = True
+        with patch("docker_stack_generator.monitoring_widget._VaultDialog") as dialog_type:
+            dialog_type.return_value.exec.side_effect = lambda: self.assertTrue(self.widget._editing)
+            self.widget._show_vault()
+        dialog_type.assert_called_once_with(self.vault, self.widget)
+        dialog_type.return_value.clear.assert_called_once()
+        self.assertFalse(self.widget._editing)
+
+    def test_vault_deletion_requires_confirmation_and_supports_old_endpoints(self):
+        from PyQt6.QtWidgets import QMessageBox
+        from docker_stack_generator.monitoring_widget import _VaultDialog
+        old = MonitorTarget("production/old-stack", "old-service", "https://old.example.test")
+        self.vault.keys.return_value = [old.credential_key]
+        self.vault.get.return_value = {"kind": "bearer", "token": "private"}
+        dialog = _VaultDialog(self.vault)
+        try:
+            dialog._entries.setCurrentItem(dialog._entries.topLevelItem(0))
+            with patch("docker_stack_generator.monitoring_widget.QMessageBox.question",
+                       return_value=QMessageBox.StandardButton.No):
+                dialog._delete_entry()
+            self.vault.delete.assert_not_called()
+            with patch("docker_stack_generator.monitoring_widget.QMessageBox.question",
+                       return_value=QMessageBox.StandardButton.Yes):
+                dialog._delete_entry()
+            self.vault.delete.assert_called_once_with(old.credential_key)
+            self.assertEqual(dialog._secret.text(), "")
+        finally:
+            dialog.clear()
+            dialog.deleteLater()
+
+    def test_vault_edit_preserves_endpoint_key(self):
+        from docker_stack_generator.monitoring_widget import _VaultDialog
+        key = self.widget._targets[0].credential_key
+        original = {"kind": "bearer", "token": "original"}
+        updated = {"kind": "bearer", "token": "updated"}
+        self.vault.keys.return_value = [key]
+        self.vault.get.return_value = original
+        dialog = _VaultDialog(self.vault)
+        try:
+            dialog._entries.setCurrentItem(dialog._entries.topLevelItem(0))
+            with patch("docker_stack_generator.monitoring_widget._CredentialDialog") as editor_type:
+                editor = editor_type.return_value
+                editor.exec.return_value = True
+                editor.value.return_value = updated
+                dialog._edit_entry()
+            editor.set_value.assert_called_once_with(original)
+            self.vault.set.assert_called_once_with(key, updated)
+            editor.clear.assert_called_once()
+        finally:
+            dialog.clear()
+            dialog.deleteLater()
 
 
 if __name__ == "__main__":

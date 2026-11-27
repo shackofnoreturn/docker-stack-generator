@@ -174,6 +174,10 @@ class CredentialVault:
         value = entries.get(key)
         return dict(value) if value is not None else None
 
+    def keys(self) -> list[str]:
+        entries, _, _ = self._require_unlocked()
+        return sorted(entries)
+
     def set(self, key: str, value: dict[str, str]) -> None:
         entries, fernet, salt = self._require_unlocked()
         if not isinstance(key, str) or not isinstance(value, dict) or any(

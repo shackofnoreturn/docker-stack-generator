@@ -59,7 +59,7 @@ def discover_targets(entries: list[SavedStack], endpoints: dict[str, str], domai
     for entry in entries:
         stack = f"{entry.config.environment}/{entry.config.name}"
         for service in entry.config.services:
-            suggested = ""
+            suggested = "https://" + service.name + ".${DOMAIN}"
             if service.homepage is not None:
                 suggested = {
                     **homepage_label_defaults(service.name, service.display_name, service.description),
@@ -74,7 +74,8 @@ def discover_targets(entries: list[SavedStack], endpoints: dict[str, str], domai
                     suggested = f"https://{service.name}.${{DOMAIN}}"
             target = MonitorTarget(stack, service.name, suggested)
             url = endpoints.get(target.key, suggested)
-            targets.append(MonitorTarget(stack, service.name, url.replace("${DOMAIN}", domain.strip())))
+            resolved = url.replace("${DOMAIN}", domain.strip()) if domain.strip() else url
+            targets.append(MonitorTarget(stack, service.name, resolved))
     return sorted(targets, key=lambda target: (target.stack, target.service))
 
 
