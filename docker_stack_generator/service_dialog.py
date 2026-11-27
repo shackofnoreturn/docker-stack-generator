@@ -58,6 +58,7 @@ from docker_stack_generator.highlighter import ConfigFileHighlighter
 from docker_stack_generator.credential_vault import CredentialVault
 from docker_stack_generator.secret_widgets import edit_secret
 from docker_stack_generator.age_secrets import validate_secret_name
+from docker_stack_generator.dockerhub import format_search_result, sort_search_results
 
 
 # ---------------------------------------------------------------------------
@@ -753,8 +754,21 @@ class ServiceDialog(QDialog):
         history_row.addWidget(self._history_combo)
         lv.addLayout(history_row)
 
+        sort_row = QHBoxLayout()
+        sort_row.addWidget(QLabel("Sort results:"))
+        self._sort_combo = QComboBox()
+        self._sort_combo.addItem("Relevance", "relevance")
+        self._sort_combo.addItem("Stars", "stars")
+        self._sort_combo.addItem("Pulls", "pulls")
+        self._sort_combo.addItem("Name", "name")
+        self._sort_combo.currentIndexChanged.connect(self._render_search_results)
+        sort_row.addWidget(self._sort_combo)
+        lv.addLayout(sort_row)
+
         self._result_list = QListWidget()
         self._result_list.setAlternatingRowColors(True)
+        self._result_list.setWordWrap(True)
+        self._result_list.setTextElideMode(Qt.TextElideMode.ElideNone)
         self._result_list.itemClicked.connect(self._on_result_selected)
         lv.addWidget(self._result_list, 1)
 
@@ -812,7 +826,7 @@ class ServiceDialog(QDialog):
 
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(1, 1)
 
         # ---- Dialog buttons -----------------------------------------------
         btn_box = QDialogButtonBox(
@@ -1188,18 +1202,19 @@ class ServiceDialog(QDialog):
     def _on_search_done(self, results: list[dict]):
         self._search_btn.setEnabled(True)
         self._search_results = results
+        self._render_search_results()
+
+    def _render_search_results(self, *_):
         self._result_list.clear()
-        if not results:
+        if not self._search_results:
             self._search_status.setText("No results found.")
             return
+        sort_by = self._sort_combo.currentData()
+        results = sort_search_results(self._search_results, sort_by)
         for r in results:
-            official = " ✓" if r.get("official") else ""
-            stars = r.get("star_count", 0) or 0
-            stars_str = f" ★{stars:,}" if stars else ""
-            text = f"{r['name']}{official}{stars_str}"
-            if r.get("short_description"):
-                text += f"\n  {r['short_description'][:80]}"
+            text, tooltip = format_search_result(r)
             item = QListWidgetItem(text)
+            item.setToolTip(tooltip)
             item.setData(Qt.ItemDataRole.UserRole, r)
             self._result_list.addItem(item)
         self._search_status.setText(f"{len(results)} result(s). Click one to select.")
@@ -1379,3 +1394,4 @@ class ServiceDialog(QDialog):
             config_files=config_files,
             config_directories=config_directories,
         )
+

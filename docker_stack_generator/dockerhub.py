@@ -10,6 +10,7 @@ from typing import Optional
 import requests
 
 TIMEOUT = 10  # seconds
+SEARCH_DESCRIPTION_LIMIT = 120
 
 # ---------------------------------------------------------------------------
 # Search
@@ -42,6 +43,37 @@ def search(query: str, page_size: int = 15) -> list[dict]:
         return out
     except requests.RequestException as exc:
         raise ConnectionError(f"Docker Hub search failed: {exc}") from exc
+
+
+def format_search_result(result: dict) -> tuple[str, str]:
+    """Return visible list text and a complete tooltip for a search result."""
+    name = result.get("name", "")
+    official = " ✓" if result.get("official") else ""
+    stars = result.get("star_count", 0) or 0
+    description = result.get("short_description", "") or ""
+
+    text = f"{name}{official}  ★ {stars:,}"
+    if description:
+        short_description = description[:SEARCH_DESCRIPTION_LIMIT]
+        if len(description) > SEARCH_DESCRIPTION_LIMIT:
+            short_description = short_description.rstrip() + "..."
+        text += f"\n{short_description}"
+
+    tooltip = f"{name}{official}  ★ {stars:,}"
+    if description:
+        tooltip += f"\n{description}"
+    return text, tooltip
+
+
+def sort_search_results(results: list[dict], sort_by: str) -> list[dict]:
+    """Sort fetched results locally, preserving relevance order as the default."""
+    if sort_by == "stars":
+        return sorted(results, key=lambda result: result.get("star_count") or 0, reverse=True)
+    if sort_by == "pulls":
+        return sorted(results, key=lambda result: result.get("pull_count") or 0, reverse=True)
+    if sort_by == "name":
+        return sorted(results, key=lambda result: result.get("name", "").casefold())
+    return list(results)
 
 
 # ---------------------------------------------------------------------------
@@ -246,3 +278,4 @@ def get_exposed_ports(image: str) -> list[str]:
         if m:
             ports.append(m.group(1))
     return sorted(ports, key=int)
+
