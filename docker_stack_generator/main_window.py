@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from docker_stack_generator.config import settings
+from docker_stack_generator.deployment_widget import DeploymentWidget
 from docker_stack_generator.generator import (
     GenerationError,
     ServiceConfig,
@@ -118,6 +119,10 @@ class MainWindow(QMainWindow):
         tpl_act.setShortcut("Ctrl+3")
         tpl_act.triggered.connect(lambda: self._tabs.setCurrentIndex(2))
         view_menu.addAction(tpl_act)
+        deploy_act = QAction("&Deployments  Ctrl+4", self)
+        deploy_act.setShortcut("Ctrl+4")
+        deploy_act.triggered.connect(lambda: self._tabs.setCurrentIndex(3))
+        view_menu.addAction(deploy_act)
 
         help_menu = menu.addMenu("&Help")
         about_act = QAction("&About", self)
@@ -186,6 +191,11 @@ class MainWindow(QMainWindow):
         # ---- Tab 3: Template Library ---------------------------------------
         self._tpl_manager = TemplateManagerWidget()
         self._tabs.addTab(self._tpl_manager, "📂  Template Library")
+        self._deployment_widget = DeploymentWidget()
+        self._tabs.addTab(self._deployment_widget, "Deployments")
+        self._tabs.currentChanged.connect(
+            lambda index: self._deployment_widget.refresh_stacks() if index == 3 else None
+        )
 
         self._tabs.currentChanged.connect(self._on_main_tab_changed)
 
@@ -735,6 +745,9 @@ class MainWindow(QMainWindow):
                 pass
 
     def closeEvent(self, event):
+        if not self._deployment_widget.prepare_close():
+            event.ignore()
+            return
         settings.set("window_geometry", bytes(self.saveGeometry().toHex()).decode("ascii"))
         super().closeEvent(event)
 
@@ -769,3 +782,4 @@ class MainWindow(QMainWindow):
     def _export_csv(self):
         self._tabs.setCurrentIndex(1)
         self._stack_library_widget._export_csv()
+

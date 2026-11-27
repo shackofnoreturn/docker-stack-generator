@@ -15,6 +15,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 - **Traefik labels** — per-service tab with service-based router, hostname, backend port variable, and editable routing settings
 - **Homepage labels** — per-service tab with customizable group, name, icon, URL, and description
 - **Service configuration files** — import or create files, edit UTF-8 text, and add nested subdirectories under `configs/<service>/`
+- **Semaphore deployments** - launch configured playbooks, monitor task status and output, resume saved runs, and check service endpoint reachability
 - **Preview** — live `stack.yml` and `compose.yml.j2` preview before writing any files
 - **Recent stacks** — quick access to previously generated stacks
 - **Same output format** as the original `new-stack.sh`
@@ -113,6 +114,87 @@ and exports; do not import credentials that should instead be stored as secrets.
 
 Configuration files are not automatically mounted into containers. Add the
 appropriate config bind mounts in the service's **Volumes** tab.
+
+## Semaphore Deployments
+
+The **Deployments** tab beside Template Library uses the same API flow as the
+reference files in `docker_stack_generator/semaphore/`. It does not require Bash,
+curl, jq, a local Docker socket, or a local Ansible installation.
+
+### Connection and Targets
+
+1. Enter your Semaphore server URL and either a username/password or an API token.
+        Click **Connect** to verify authentication. Credentials are kept in memory only,
+        not saved to settings or run history. Prefer HTTPS; HTTP requires explicit
+        approval because it sends credentials and logs unencrypted. TLS certificate
+        verification is enabled.
+2. Open **Targets** and verify the project and template IDs for each environment.
+        Defaults follow the supplied scripts: project `1`, development `41`, testing
+        `42`, production `43`, management `44`. The template's inventory and playbook
+        decide which Swarm is used; an environment label alone does not choose a Swarm.
+3. Select a stack from the saved library or generated directories under your
+        configured stacks root and environment. You can also enter a repository stack
+        name directly. Click **Refresh stacks** after saving or importing definitions.
+4. Click **Run playbook**, check the confirmation, and approve the selected server,
+        environment, project, template, and stack.
+
+The request supplies `stack_name` as a survey variable inside Semaphore's
+JSON-encoded `environment` string. Optional extra survey variables can be set per
+target as a JSON object; the selected stack always wins over a `stack_name`
+override. Extra variables are saved in plain text, so keep secrets in Semaphore's
+credential/environment configuration instead.
+
+Semaphore runs its configured playbook against its configured stack repository.
+The app does **not** upload, commit, or push local definitions when deploying.
+Generate, commit, and push changes to the stack-definition repository first, and
+ensure the playbook checks out the correct branch and environment.
+
+### Status and Diagnostics
+
+Task status and actual execution output refresh in the background every three
+seconds. The app retrieves formatted output and falls back to raw output, exposing
+playbook failures and task messages rather than treating a started task as a
+successful deployment. **Open in Semaphore** opens the remote task details.
+
+The last 30 task references are saved locally without credentials or logs.
+Reconnect after reopening the app, then use **Resume selected run**. Use **Attach
+task ID** to monitor an existing task in the selected project, including after an
+ambiguous start response. Before retrying a failed start request, check Semaphore
+history: a network interruption can occur after Semaphore accepted the task.
+
+**Pause monitoring** only pauses local monitoring; it never cancels the remote
+playbook. Monitoring also pauses after 30 minutes or five consecutive polling
+errors; **Refresh task** reconnects and resumes it. Closing the app leaves remote
+tasks running. Wait for in-flight network requests to finish before closing.
+
+### Service Reachability
+
+Endpoint checks run after a successful **Deploy** action when enabled, or via
+**Check services**. Saved service Homepage URLs are suggested automatically;
+default Traefik URLs are suggested where no custom router rule is present.
+Otherwise enter one HTTP(S) URL per line, optionally as `service=https://host/health`.
+Set **DOMAIN** to resolve `${DOMAIN}` in suggested URLs. Endpoint lists are saved
+per environment/stack. Non-HTTP services need an appropriate HTTP health endpoint
+or separate checks in the playbook.
+
+Checks retry every ten seconds for approximately three minutes while services
+start. The table distinguishes successful HTTP responses, authentication-required
+responses, redirects with unverified destinations, TLS errors, HTTP errors, and
+connection/DNS/timeout failures. You can pause checks, adjust URLs, and retry.
+
+These are checks **from the machine running this app**, not from inside the Swarm.
+A reachable endpoint does not verify replica counts, container health, or application
+correctness, and a successful playbook does not guarantee endpoint readiness.
+Prefer service-specific health URLs; use the playbook output and Semaphore task
+details for deployment diagnostics. No live Swarm inspection is performed.
+
+### Additional Playbooks
+
+Targets can also map actions such as **Remove**, **Backup**, **Restore**, or **Move**
+to your own Semaphore templates, with extra survey variables for their inputs.
+Every action requires confirmation and uses the same status/log monitoring.
+Only actions named **Deploy** start automatic endpoint checks. The application
+does not supply these playbooks or implement backup/restore semantics itself.
 
 ## Generated Output
 
