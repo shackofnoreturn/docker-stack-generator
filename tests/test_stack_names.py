@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import unittest
+from copy import deepcopy
 from tempfile import TemporaryDirectory
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +33,38 @@ class StackNameTests(unittest.TestCase):
             self.assertEqual(duplicate.config.name, "my-new-stack")
             self.assertEqual(duplicate.key, "development__my-new-stack")
 
+    def test_rename_stack_rekeys_and_preserves_history(self):
+        with TemporaryDirectory() as root:
+            library = StackLibrary(Path(root) / "library")
+            original = library.save_stack(
+                StackConfig("old-name", "Old Name", "production", root),
+                generated=True,
+            )
+            updated_config = deepcopy(original.config)
+            updated_config.name = "new-name"
+            updated_config.display_name = "New Name"
+
+            renamed = library.rename_stack(original.key, updated_config)
+
+            self.assertEqual(renamed.key, "production__new-name")
+            self.assertEqual(renamed.config.display_name, "New Name")
+            self.assertEqual(renamed.created_at, original.created_at)
+            self.assertEqual(renamed.last_generated_at, original.last_generated_at)
+            self.assertIsNone(library.load_stack(original.key))
+            self.assertEqual(library.load_stack(renamed.key).config.name, "new-name")
+
+    def test_rename_stack_rejects_existing_target_without_removing_source(self):
+        with TemporaryDirectory() as root:
+            library = StackLibrary(Path(root) / "library")
+            original = library.save_stack(StackConfig("first", "First", "production", root))
+            library.save_stack(StackConfig("taken", "Taken", "production", root))
+            updated_config = deepcopy(original.config)
+            updated_config.name = "taken"
+            updated_config.display_name = "Taken"
+
+            self.assertIsNone(library.rename_stack(original.key, updated_config))
+            self.assertIsNotNone(library.load_stack(original.key))
+
     def test_generated_path_and_stack_identifier_keep_hyphens(self):
         with TemporaryDirectory() as root:
             cfg = StackConfig(stack_slugify("Arr Media"), "Arr Media", "development", root,
@@ -58,3 +91,4 @@ class StackNameUiTests(unittest.TestCase):
         self.assertEqual(MainWindow._stack_name(window, "Arr Media"), "arr_media")
         self.assertEqual(MainWindow._stack_name(window, "arr-media"), "arr-media")
         self.assertEqual(MainWindow._stack_name(window, "Another Stack"), "another-stack")
+

@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QInputDialog,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -34,6 +35,7 @@ from PyQt6.QtWidgets import (
 from docker_stack_generator.config import settings
 from docker_stack_generator.deployment_widget import DeploymentWidget
 from docker_stack_generator.monitoring_widget import MonitoringWidget
+from docker_stack_generator.new_stack_dialog import NewStackDialog
 from docker_stack_generator.generator import (
     GenerationError,
     ServiceConfig,
@@ -75,7 +77,7 @@ class MainWindow(QMainWindow):
         file_menu = menu.addMenu("&File")
         new_act = QAction("&New Stack", self)
         new_act.setShortcut("Ctrl+N")
-        new_act.triggered.connect(self._reset_form)
+        new_act.triggered.connect(lambda: self._new_stack())
         file_menu.addAction(new_act)
 
         save_lib_act = QAction("💾 &Save to Library", self)
@@ -159,6 +161,9 @@ class MainWindow(QMainWindow):
         self._stack_library_widget = StackLibraryWidget()
         self._stack_library_widget.load_requested.connect(self._load_from_library)
         self._stack_library_widget.generate_requested.connect(self._generate_from_library)
+        self._stack_library_widget.edit_service_requested.connect(self._edit_library_service)
+        self._stack_library_widget.edit_stack_requested.connect(self._edit_library_stack)
+        self._stack_library_widget.new_stack_requested.connect(self._new_stack)
         self._tabs.addTab(self._stack_library_widget, "📚  Stack Library")
 
         # ---- Tab 3: Template Library ---------------------------------------
@@ -424,6 +429,66 @@ class MainWindow(QMainWindow):
             self._services[idx] = new_svc
             self._refresh_services_list()
             self._refresh_preview()
+
+    def _edit_library_service(self, saved: SavedStack, index: int):
+        if not 0 <= index < len(saved.config.services):
+            return
+
+        cfg = deepcopy(saved.config)
+        existing = cfg.services[index]
+        dlg = ServiceDialog(self, existing=existing, vault=self._monitoring_widget._vault)
+        if not dlg.exec():
+            return
+
+        updated = dlg.result_service()
+        if any(
+            service.name == updated.name and service_index != index
+            for service_index, service in enumerate(cfg.services)
+        ):
+            QMessageBox.warning(
+                self,
+                "Duplicate service",
+                f"Another service named '{updated.name}' already exists.",
+            )
+            return
+
+        cfg.services[index] = updated
+        saved = stack_library.save_stack(cfg, generated=False)
+        self._stack_library_widget.refresh()
+        self._status.showMessage(
+            f"Saved service '{updated.display_name}' in '{saved.config.display_name}'."
+        )
+
+    def _edit_library_stack(self, saved: SavedStack):
+        display_name, accepted = QInputDialog.getText(
+            self,
+            "Edit Stack Name",
+            "Stack name:",
+            text=saved.config.display_name,
+        )
+        if not accepted:
+            return
+
+        display_name = display_name.strip()
+        name = stack_slugify(display_name)
+        if not name:
+            QMessageBox.warning(self, "Validation", "Please enter a valid stack name.")
+            return
+
+        cfg = deepcopy(saved.config)
+        cfg.display_name = display_name
+        cfg.name = name
+        renamed = stack_library.rename_stack(saved.key, cfg)
+        if renamed is None:
+            QMessageBox.warning(
+                self,
+                "Stack name unavailable",
+                "A stack with that name already exists, or the selected stack was removed.",
+            )
+            return
+
+        self._stack_library_widget.refresh(select_key=renamed.key)
+        self._status.showMessage(f"Renamed stack to '{renamed.config.display_name}'.")
 
     def _remove_service(self):
         idx = self._services_list.currentRow()
@@ -734,7 +799,11 @@ class MainWindow(QMainWindow):
     # Form reset
     # ------------------------------------------------------------------
 
-    def _reset_form(self):
+    def _new_stack(self):
+        dlg = NewStackDialog(settings.stacks_env, self)
+        if not dlg.exec():
+            return
+
         if self._services:
             reply = QMessageBox.question(
                 self,
@@ -744,10 +813,12 @@ class MainWindow(QMainWindow):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
+
+        display_name, environment, description = dlg.values()
         self._loaded_stack_identity = None
-        self._stack_name_input.clear()
-        self._env_input.setText(settings.stacks_env)
-        self._description_input.clear()
+        self._stack_name_input.setText(display_name)
+        self._env_input.setText(environment)
+        self._description_input.setPlainText(description)
         self._services.clear()
         self._refresh_services_list()
         self._preview_rendered.clear()
@@ -755,7 +826,10 @@ class MainWindow(QMainWindow):
         self._preview_stack_yml.clear()
         self._overwrite_check.setChecked(False)
         self._tabs.setCurrentIndex(0)
-        self._status.showMessage("Ready.")
+        self._status.showMessage(f"New stack '{display_name}' is ready for services.")
+
+    def _reset_form(self):
+        self._new_stack()
 
     # ------------------------------------------------------------------
     # Geometry persistence
@@ -812,3 +886,4 @@ class MainWindow(QMainWindow):
     def _export_csv(self):
         self._tabs.setCurrentIndex(1)
         self._stack_library_widget._export_csv()
+

@@ -174,6 +174,31 @@ class StackLibrary:
         )
         return saved
 
+    def rename_stack(self, key: str, cfg: StackConfig) -> Optional[SavedStack]:
+        """Save a renamed stack under its new key and preserve its history."""
+        existing = self.load_stack(key)
+        if existing is None:
+            return None
+
+        new_key = stack_key(cfg.environment, cfg.name)
+        if new_key != key and self._file_for(new_key).exists():
+            return None
+
+        saved = SavedStack(
+            key=new_key,
+            config=cfg,
+            created_at=existing.created_at,
+            updated_at=_now_iso(),
+            last_generated_at=existing.last_generated_at,
+        )
+        self._file_for(new_key).write_text(
+            json.dumps(saved.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+        if new_key != key:
+            self._file_for(key).unlink()
+        return saved
+
     def delete_stack(self, key: str) -> bool:
         path = self._file_for(key)
         if path.exists():
@@ -354,3 +379,4 @@ class StackLibrary:
 
 # Singleton instance
 stack_library = StackLibrary()
+

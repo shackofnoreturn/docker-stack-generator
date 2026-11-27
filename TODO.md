@@ -30,11 +30,11 @@ Image-declared Docker Hub volumes can now be suggested as runtime directories an
 - [x] When scrolling through Docker Hub images I would like to be able to sort by different criteria.
 
 
-- [ ] I would like to edit services in the Stack Manager tab. I can see the services. I would only need to double click one and the same dialog could pop up like it does in the generator tab.
+- [x] I would like to edit services in the Stack Manager tab. I can see the services. I would only need to double click one and the same dialog could pop up like it does in the generator tab.
 
 
-- [ ] In the Stack manager tab I would like to be able to edit the stack by double clicking on the stack name in the right column.
+- [x] In the Stack manager tab I would like to be able to edit the stack by double clicking on the stack name in the right column.
 
 
-- [ ] In the Stack manager tab I would like to be able to create a new stack by clicking a button and opening a new dialog. This would also be the case when I go to file -> new.
+- [x] In the Stack manager tab I would like to be able to create a new stack by clicking a button and opening a new dialog. This would also be the case when I go to file -> new.
 

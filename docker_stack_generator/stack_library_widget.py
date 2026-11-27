@@ -45,6 +45,14 @@ def _fmt_ts(ts: Optional[str]) -> str:
     return ts[:16].replace("T", " ")
 
 
+class _DoubleClickLabel(QLabel):
+    double_clicked = pyqtSignal()
+
+    def mouseDoubleClickEvent(self, event):
+        self.double_clicked.emit()
+        super().mouseDoubleClickEvent(event)
+
+
 class DuplicateStackDialog(QDialog):
     """Prompt for a new name and environment when duplicating a saved stack."""
 
@@ -92,6 +100,9 @@ class StackLibraryWidget(QWidget):
 
     load_requested = pyqtSignal(object)  # SavedStack
     generate_requested = pyqtSignal(object, bool)  # SavedStack, sync
+    edit_service_requested = pyqtSignal(object, int)  # SavedStack, service index
+    edit_stack_requested = pyqtSignal(object)  # SavedStack
+    new_stack_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,6 +160,12 @@ class StackLibraryWidget(QWidget):
         refresh_btn.clicked.connect(self.refresh)
         hb.addWidget(refresh_btn)
 
+        new_stack_btn = QPushButton("＋  New Stack")
+        new_stack_btn.setStyleSheet(_btn_style)
+        new_stack_btn.setToolTip("Start a new stack in the Stack Generator")
+        new_stack_btn.clicked.connect(lambda: self.new_stack_requested.emit())
+        hb.addWidget(new_stack_btn)
+
         root.addWidget(header)
 
         # Splitter: left list | right details
@@ -184,8 +201,10 @@ class StackLibraryWidget(QWidget):
         rv.setContentsMargins(4, 8, 8, 8)
         rv.setSpacing(8)
 
-        self._detail_title = QLabel("<b>Select a saved stack</b>")
+        self._detail_title = _DoubleClickLabel("<b>Select a saved stack</b>")
         self._detail_title.setStyleSheet("font-size:15px;")
+        self._detail_title.setToolTip("Double-click the stack name to edit it")
+        self._detail_title.double_clicked.connect(self._edit_stack_selected)
         rv.addWidget(self._detail_title)
 
         rv.addWidget(HSeparator())
@@ -218,6 +237,7 @@ class StackLibraryWidget(QWidget):
         self._svc_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._svc_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._svc_table.setAlternatingRowColors(True)
+        self._svc_table.cellDoubleClicked.connect(self._on_service_double_clicked)
         self._svc_table.verticalHeader().setVisible(False)
         hdr = self._svc_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -281,8 +301,8 @@ class StackLibraryWidget(QWidget):
         super().showEvent(event)
         self.refresh()
 
-    def refresh(self):
-        selected_key = self._current.key if self._current else None
+    def refresh(self, select_key: Optional[str] = None):
+        selected_key = select_key or (self._current.key if self._current else None)
         self._entries = stack_library.list_stacks()
         self._count_label.setText(f"{len(self._entries)} saved stack(s)")
         self._apply_filter(self._filter_input.text(), restore_key=selected_key)
@@ -405,6 +425,15 @@ class StackLibraryWidget(QWidget):
         if not self._current:
             return
         self.load_requested.emit(self._current)
+
+    def _on_service_double_clicked(self, row: int, _column: int):
+        if self._current is None or not 0 <= row < len(self._current.config.services):
+            return
+        self.edit_service_requested.emit(self._current, row)
+
+    def _edit_stack_selected(self):
+        if self._current is not None:
+            self.edit_stack_requested.emit(self._current)
 
     def set_generation_busy(self, busy: bool):
         self._generation_busy = busy
@@ -554,3 +583,4 @@ class StackLibraryWidget(QWidget):
             )
         except Exception as exc:
             QMessageBox.critical(self, "Export Failed", str(exc))
+
