@@ -18,6 +18,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 - **Semaphore deployments** - launch configured playbooks, monitor task status and output, resume saved runs, and check service endpoint reachability
 - **Preview** — live `stack.yml` and `compose.yml.j2` preview before writing any files
 - **Generate & Sync** — generate a stack, commit generated files in the destination repository, and push to its upstream branch
+- **Stack monitoring** - periodically check HTTP(S) endpoints for saved stacks and services, with encrypted per-service authentication
 - **Recent stacks** — quick access to previously generated stacks
 - **Same output format** as the original `new-stack.sh`
 
@@ -26,6 +27,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 - Python 3.11+
 - `python-pyqt6` (install via `sudo pacman -S python-pyqt6` on Arch)
 - `requests`, `PyYAML`, and `Jinja2`
+- `cryptography` (encrypted local credential vault)
 
 ## Usage
 
@@ -41,6 +43,60 @@ python -m docker_stack_generator
 In VS Code, use **Terminal > Run Task > Install prerequisites** to install the
 application and its declared dependencies into the `python` environment on your PATH.
 Use **Run application** to launch the GUI from the workspace directory.
+
+## Stack Monitoring
+
+Open **Monitoring** to see all stacks and services saved in **Stack Library**,
+across environments. Save or import stack definitions first; this is not a Docker
+Swarm inventory connection and does not inspect containers, replica counts, or
+stacks that exist only on disk. **Refresh stacks** picks up library changes.
+
+Homepage URLs and simple Traefik `Host` rules provide suggested endpoints.
+Set the domain field to resolve `${DOMAIN}`, or select a service and use
+**Edit endpoint** (also available by double-clicking). Use a dedicated health URL
+where possible. Blank endpoints disable that service's check and keep the stack
+incomplete rather than falsely healthy. URLs and polling preferences are stored
+locally in `~/.config/docker-stack-generator/monitoring.json`; do not put passwords
+or tokens in URL paths or query strings.
+
+**Check now** runs one check of all services. **Start monitoring** repeats checks
+while the application is open, including when another tab is selected, at the
+configured interval (10-3600 seconds). Automatic monitoring is paused on launch.
+Checks do not overlap. The tree shows each service's result, timestamp, and an
+aggregate stack state; a stack is healthy only when all its services return 2xx.
+HTTP errors, network/TLS errors, redirects, authorization failures, missing
+endpoints, and unchecked services are distinguished. Redirects are not followed:
+configure their final health URL instead. A 2xx login page cannot prove that the
+underlying application works, so use an appropriate authenticated health endpoint.
+TLS verification stays enabled; implicit `.netrc` credentials and environment
+proxy settings are not used by monitoring.
+
+For HTTP 401/403, select the service and choose **Set credentials / retry**.
+Basic authentication and bearer tokens are supported (not browser/SSO form login).
+Credentials are sent only over HTTPS, only to the exact endpoint they were saved
+for; changing that URL requires configuring credentials again. Saving credentials
+immediately retries checks. **Remove credentials** deletes the selected endpoint's
+credential. Endpoint changes leave the old encrypted credential unused; to remove
+it, temporarily restore the old endpoint and use **Remove credentials**.
+
+### Encrypted credential vault
+
+**Unlock / create vault** creates or unlocks the application's local encrypted
+vault at `~/.config/docker-stack-generator/credentials.vault`. On creation choose
+and confirm a master password of at least 12 characters. The password is not saved
+and must be entered after each application launch. **There is no password recovery**:
+keep a secure backup of both your vault and master password. Library backups and
+exports do not include the vault or monitoring preferences.
+
+The vault uses authenticated encryption with a salted password-derived key.
+Credentials are decrypted in memory only while unlocked; locking or closing drops
+the application's key and credential references (Python cannot guarantee memory
+erasure). Locked checks run without stored credentials and may show authorization
+failures. **Lock vault** clears displayed results, but does not stop periodic
+unauthenticated checks. Wait for in-flight checks before locking or closing.
+The vault protects data at rest, not against malware or another process controlling
+your running account. Existing generated secret files and stack exports are
+unchanged; this feature does not yet move Docker secrets into the vault.
 
 ## Project Structure
 
