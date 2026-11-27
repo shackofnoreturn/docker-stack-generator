@@ -10,6 +10,7 @@ from typing import Optional
 import requests
 
 TIMEOUT = 10  # seconds
+SEARCH_DESCRIPTION_LIMIT = 120
 
 # ---------------------------------------------------------------------------
 # Search
@@ -51,15 +52,14 @@ def format_search_result(result: dict) -> tuple[str, str]:
     stars = result.get("star_count", 0) or 0
     description = result.get("short_description", "") or ""
 
-    text = f"{name}{official}"
-    if stars:
-        text += f"\n★ {stars:,}"
+    text = f"{name}{official}  ★ {stars:,}"
     if description:
-        text += f"\n{description[:80]}"
+        short_description = description[:SEARCH_DESCRIPTION_LIMIT]
+        if len(description) > SEARCH_DESCRIPTION_LIMIT:
+            short_description = short_description.rstrip() + "..."
+        text += f"\n{short_description}"
 
-    tooltip = f"{name}{official}"
-    if stars:
-        tooltip += f"\n★ {stars:,}"
+    tooltip = f"{name}{official}  ★ {stars:,}"
     if description:
         tooltip += f"\n{description}"
     return text, tooltip

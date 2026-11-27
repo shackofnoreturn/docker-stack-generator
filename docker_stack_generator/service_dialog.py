@@ -768,6 +768,7 @@ class ServiceDialog(QDialog):
         self._result_list = QListWidget()
         self._result_list.setAlternatingRowColors(True)
         self._result_list.setWordWrap(True)
+        self._result_list.setTextElideMode(Qt.TextElideMode.ElideNone)
         self._result_list.itemClicked.connect(self._on_result_selected)
         lv.addWidget(self._result_list, 1)
 

@@ -8,7 +8,10 @@ from docker_stack_generator.dockerhub import format_search_result, sort_search_r
 class DockerHubResultFormattingTests(unittest.TestCase):
     def test_long_name_keeps_star_count_visible_and_tooltip_is_complete(self):
         image_name = "registry.example.org/a-very-long-image-repository-name/application"
-        description = "A service image description that is longer than eighty characters and remains available in the tooltip."
+        description = (
+            "A service image description that remains available in the tooltip, "
+            "even when it is much longer than the visible search result preview."
+        )
         text, tooltip = format_search_result(
             {
                 "name": image_name,
@@ -20,9 +23,16 @@ class DockerHubResultFormattingTests(unittest.TestCase):
 
         self.assertEqual(
             text.splitlines(),
-            [image_name + " ✓", "★ 123,456", description[:80]],
+            [image_name + " ✓  ★ 123,456", description[:120] + "..."],
         )
         self.assertIn(description, tooltip)
+
+    def test_zero_stars_and_short_description_are_still_shown(self):
+        text, _ = format_search_result(
+            {"name": "example/image", "star_count": 0, "short_description": "A short image description."}
+        )
+
+        self.assertEqual(text, "example/image  ★ 0\nA short image description.")
 
 
 class DockerHubResultSortingTests(unittest.TestCase):
@@ -68,7 +78,9 @@ class DockerHubSearchResultsTests(unittest.TestCase):
         self.dialog = ServiceDialog()
         self.addCleanup(self.dialog.close)
 
-    def test_long_image_names_wrap_and_star_count_has_separate_line(self):
+    def test_long_image_names_and_star_counts_are_not_elided(self):
+        from PyQt6.QtCore import Qt
+
         image_name = "registry.example.org/a-very-long-image-repository-name/application"
         self.dialog._on_search_done(
             [
@@ -83,7 +95,8 @@ class DockerHubSearchResultsTests(unittest.TestCase):
 
         item = self.dialog._result_list.item(0)
         self.assertTrue(self.dialog._result_list.wordWrap())
-        self.assertEqual(item.text().splitlines(), [image_name, "★ 123,456", "A service image"])
+        self.assertEqual(self.dialog._result_list.textElideMode(), Qt.TextElideMode.ElideNone)
+        self.assertEqual(item.text().splitlines(), [image_name + "  ★ 123,456", "A service image"])
         self.assertIn(image_name, item.toolTip())
         self.assertIn("★ 123,456", item.toolTip())
 
