@@ -188,23 +188,35 @@ class GenerateWorker(QThread):
     done = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, cfg, overwrite: bool, sync: bool = False):
+    def __init__(self, cfg, overwrite: bool, sync: bool = False,
+                 secret_values: dict[str, bytes] | None = None, age_recipients: str = ""):
         super().__init__()
         self.cfg = cfg
         self.overwrite = overwrite
         self.sync = sync
         self.sync_result = ""
         self.sync_error = ""
+        self.secret_values = dict(secret_values or {})
+        self.age_recipients = age_recipients
 
     def run(self):
         from docker_stack_generator import generator
         from docker_stack_generator.repository_sync import RepositorySync, RepositorySyncError
         try:
             repository = RepositorySync.prepare(self.cfg) if self.sync else None
-            created = generator.generate_stack(self.cfg, overwrite=self.overwrite)
+            if self.secret_values:
+                from docker_stack_generator.age_secrets import encrypt_secret
+                encrypted = {name: encrypt_secret(value, self.age_recipients)
+                             for name, value in self.secret_values.items()}
+                self.secret_values.clear()
+                created = generator.generate_stack(self.cfg, overwrite=self.overwrite, encrypted_secrets=encrypted)
+            else:
+                created = generator.generate_stack(self.cfg, overwrite=self.overwrite)
         except Exception as exc:
             self.error.emit(str(exc))
             return
+        finally:
+            self.secret_values.clear()
         if repository is not None:
             try:
                 self.sync_result = repository.sync(self.cfg, created)

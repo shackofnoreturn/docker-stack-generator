@@ -47,6 +47,8 @@ from docker_stack_generator.stack_library import SavedStack, stack_library
 from docker_stack_generator.stack_library_widget import StackLibraryWidget
 from docker_stack_generator.template_manager import TemplateManagerWidget
 from docker_stack_generator.widgets import GenerateButton, GenerateWorker, HSeparator
+from docker_stack_generator.credential_vault import VaultError
+from docker_stack_generator.secret_store import read_secret
 
 
 class MainWindow(QMainWindow):
@@ -381,7 +383,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _add_service(self):
-        dlg = ServiceDialog(self)
+        dlg = ServiceDialog(self, vault=self._monitoring_widget._vault)
         if dlg.exec():
             svc = dlg.result_service()
             if any(s.name == svc.name for s in self._services):
@@ -402,7 +404,7 @@ class MainWindow(QMainWindow):
             return
         idx = self._services_list.row(item)
         svc = self._services[idx]
-        dlg = ServiceDialog(self, existing=svc)
+        dlg = ServiceDialog(self, existing=svc, vault=self._monitoring_widget._vault)
         if dlg.exec():
             new_svc = dlg.result_service()
             if any(s.name == new_svc.name and i != idx for i, s in enumerate(self._services)):
@@ -611,18 +613,33 @@ class MainWindow(QMainWindow):
             reply = QMessageBox.question(
                 self,
                 "Stack already exists",
-                f"The stack directory already exists:\n{cfg.stack_dir}\n\nOverwrite generated files?",
+                f"The stack directory already exists:\n{cfg.stack_dir}\n\nOverwrite generated files?"
+                + ("\n\nAfter encryption succeeds, matching extensionless and .txt plaintext secret files "
+                   "will be removed. This does not erase Git history."
+                   if any(service.secrets for service in cfg.services) else ""),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
             overwrite = True
 
+        secret_options = {}
+        names = sorted({name for svc in cfg.services for name in svc.secrets})
+        if names:
+            if not self._monitoring_widget._unlock_vault():
+                return
+            try:
+                values = {name: read_secret(self._monitoring_widget._vault, name) for name in names}
+            except (VaultError, ValueError) as exc:
+                QMessageBox.warning(self, "Secrets required", str(exc))
+                return
+            secret_options = {"secret_values": values,
+                              "age_recipients": settings.get("age_recipients", "~/.config/age/key.pub")}
         self._generate_btn.setEnabled(False)
         self._stack_library_widget.set_generation_busy(True)
         self._status.showMessage("Generating and syncing stack…" if sync else "Generating stack…")
 
-        self._generate_worker = GenerateWorker(cfg, overwrite, sync=sync)
+        self._generate_worker = GenerateWorker(cfg, overwrite, sync=sync, **secret_options)
         self._generate_worker.done.connect(self._on_generate_done)
         self._generate_worker.error.connect(self._on_generate_error)
         self._generate_worker.start()
@@ -654,7 +671,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Stack Generated & Synced!" if worker.sync else "Stack Generated!",
-            f"Stack scaffold created successfully and saved to Stack Library.\n\nFiles written to:\n  {path}\n\n{created_str}{sync_note}",
+            f"Stack scaffold created successfully and saved to Stack Library.\n\nFiles updated or removed under:\n  {path}\n\n{created_str}{sync_note}",
         )
         self._status.showMessage(f"Stack '{name}' generated at {path}{sync_note}")
 

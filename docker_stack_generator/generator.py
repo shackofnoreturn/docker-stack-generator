@@ -7,7 +7,9 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -64,7 +66,7 @@ class ServiceConfig:
     networks: list[str] = field(default_factory=list)
     """Extra networks for this service (merged with stack defaults at render time)."""
     secrets: list[str] = field(default_factory=list)
-    """Secret names (plain strings); written to secrets/ subdir and compose secrets: block."""
+    """Secret names only; values live in the vault and generated files use age encryption."""
     ports: list[PortMapping] = field(default_factory=list)
     """Long-form port mappings."""
     volumes: list[VolumeMount] = field(default_factory=list)
@@ -473,7 +475,7 @@ def generate_readme(cfg: StackConfig) -> str:
     lines.append("- `compose.yml.j2`: Jinja2 Docker Compose template")
     lines.append("- `stack.yml`: Stack metadata, runtime directories, and environment variables")
     lines.append("- `configs/`: Stack-specific configuration files")
-    lines.append("- `secrets/`: Secret-generation notes and encrypted secret files")
+    lines.append("- `secrets/`: Age-encrypted `<secret-name>.age` files (plaintext values remain in the application vault)")
     lines.append("- `../../templates/`: Shared Jinja snippets for policies, resources, logging, labels, placement, healthchecks, and mounts")
     lines.append("- `README.md`: Stack documentation")
     lines.append("")
@@ -759,7 +761,9 @@ def _service_config_plan(cfg: StackConfig) -> tuple[list[Path], dict[Path, bytes
     return directories, files
 
 
-def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
+def generate_stack(
+    cfg: StackConfig, overwrite: bool = False, encrypted_secrets: Optional[dict[str, bytes]] = None,
+) -> list[str]:
     """
     Write all stack files to disk. Returns a list of created/updated paths.
     Raises GenerationError if the directory already exists and overwrite=False.
@@ -776,9 +780,34 @@ def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
     except ValueError as exc:
         raise GenerationError(str(exc)) from exc
 
+    from docker_stack_generator.age_secrets import validate_secret_name
+    names = sorted({name for svc in cfg.services for name in svc.secrets})
+    secrets_dir = stack_dir / "secrets"
+    secret_files: dict[Path, bytes] = {}
+    legacy_files: list[Path] = []
+    for name in names:
+        try:
+            validate_secret_name(name)
+        except ValueError as exc:
+            raise GenerationError(str(exc)) from exc
+        contents = (encrypted_secrets or {}).get(name)
+        if not isinstance(contents, bytes) or not contents.startswith(b"age-encryption.org/v1\n"):
+            raise GenerationError(f"Encrypted value missing for secret '{name}'. Set its vault value and configure age encryption.")
+        if secrets_dir.is_symlink() or not secrets_dir.resolve().is_relative_to(stack_dir.resolve()):
+            raise GenerationError("The secrets directory must remain inside the stack directory.")
+        target = secrets_dir / f"{name}.age"
+        candidates = [target, secrets_dir / name, secrets_dir / f"{name}.txt"]
+        for path in candidates:
+            if path.is_symlink() or (path.exists() and not path.is_file()):
+                raise GenerationError(f"Secret output must be a regular file: {path}")
+        secret_files[target] = contents
+        legacy_files.extend(path for path in candidates[1:] if path.exists())
+    marker = secrets_dir / ".gitkeep"
+    if names and (marker.is_symlink() or (marker.exists() and not marker.is_file())):
+        raise GenerationError("The secrets .gitkeep path must be a regular file.")
+
     stack_dir.mkdir(parents=True, exist_ok=True)
     (stack_dir / "configs").mkdir(exist_ok=True)
-    secrets_dir = stack_dir / "secrets"
     secrets_dir.mkdir(exist_ok=True)
     configs_gitkeep = stack_dir / "configs" / ".gitkeep"
     configs_gitkeep.touch()
@@ -798,29 +827,31 @@ def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
             gitkeep.touch()
             created.append(str(gitkeep))
 
-    # Write secret stub files (one per unique secret, write-if-missing)
-    all_secrets: list[str] = []
-    for svc in cfg.services:
-        for s in (svc.secrets or []):
-            if s not in all_secrets:
-                all_secrets.append(s)
-
-    for secret_name in all_secrets:
-        secret_path = secrets_dir / f"{secret_name}.txt"
-        if not secret_path.exists():
-            secret_path.write_text(
-                f"# Secret: {secret_name}\n"
-                f"# Replace this file with the actual secret value.\n"
-                f"# This file is referenced by the Docker Swarm secret '{secret_name}'.\n",
-                encoding="utf-8",
-            )
-            created.append(str(secret_path))
-
-    # Always ensure .gitkeep exists even when secrets were written
-    gitkeep = secrets_dir / ".gitkeep"
-    if not gitkeep.exists():
-        gitkeep.touch()
-        created.append(str(gitkeep))
+    for path, contents in secret_files.items():
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=secrets_dir, delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(contents)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        except OSError as exc:
+            raise GenerationError("Cannot write encrypted secrets. Check directory permissions and retry.") from exc
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
+        created.append(str(path))
+    # Delete legacy plaintext only after every replacement ciphertext is on disk.
+    for path in legacy_files:
+        path.unlink()
+        created.append(str(path))
+    if names and marker.exists():
+        marker.unlink()
+        created.append(str(marker))
+    elif not names and not marker.exists():
+        marker.touch()
+        created.append(str(marker))
 
     stack_yml_path = stack_dir / "stack.yml"
     stack_yml_path.write_text(generate_stack_yml(cfg), encoding="utf-8")

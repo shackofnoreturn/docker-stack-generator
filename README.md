@@ -28,6 +28,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 - `python-pyqt6` (install via `sudo pacman -S python-pyqt6` on Arch)
 - `requests`, `PyYAML`, and `Jinja2`
 - `cryptography` (encrypted local credential vault)
+- `age` command-line tool on PATH (required when generating or importing encrypted secrets)
 
 ## Usage
 
@@ -109,8 +110,8 @@ erasure). Locked checks run without stored credentials and may show authorizatio
 failures. **Lock vault** clears displayed results, but does not stop periodic
 unauthenticated checks. Wait for in-flight checks before locking or closing.
 The vault protects data at rest, not against malware or another process controlling
-your running account. Existing generated secret files and stack exports are
-unchanged; this feature does not yet move Docker secrets into the vault.
+your running account. Docker secret contents also use this vault; saved stack
+definitions and exports include secret names only, never their values.
 
 ## Project Structure
 
@@ -143,8 +144,10 @@ interactive credential prompts are disabled.
 
 Only files written by this generation are included in the commit, including new
 shared templates and `.gitkeep` files. Unrelated files and unrelated staged changes
-are left untouched. Existing secret files and shared templates are not rewritten
-or added; newly generated secret stubs are included unless ignored by Git.
+are left untouched. Existing shared templates are not rewritten or added.
+Encrypted `.age` secrets are generated from vault values; corresponding legacy
+plaintext files are deleted after successful encryption, and tracked deletions
+are included in the generated commit. Git ignore rules apply to new `.age` files.
 Git ignore rules are respected for untracked files. Review service configuration
 contents before generating: generated configuration files may contain sensitive data.
 Commits are clearly attributed, for example:
@@ -216,6 +219,53 @@ and exports; do not import credentials that should instead be stored as secrets.
 
 Configuration files are not automatically mounted into containers. Add the
 appropriate config bind mounts in the service's **Volumes** tab.
+
+## Encrypted Docker Secrets
+
+In **Edit > Settings > Age encryption**, configure the **recipients / public key
+file** (default `~/.config/age/key.pub`) and **identity / private key file**
+(default `~/.config/age/key.pem`). Only file paths are saved in settings; keep the
+identity outside your stack repository. Install `age` on PATH. The recipients
+file is read with `age -R`, just like the shell script; it must contain supported
+age recipients, not arbitrary PEM certificate data. The identity is only needed
+when importing an encrypted `.age` file. Keys must be usable without interactive
+terminal prompts; failures are reported in the application.
+
+In a service's **Secrets** tab, add an extensionless secret name using letters,
+numbers, underscores, or hyphens, select it, and click **Set / edit value (vault)**.
+Unlock or create the existing master-password vault, then enter text or import a
+file. **Show / edit secret text** explicitly reveals the value for editing.
+Import supports plaintext files and `.age` files (decrypted using the configured
+identity). Imported bytes are preserved exactly unless you edit them as UTF-8;
+binary values can be imported and replaced without displaying them as text.
+
+Saving a value writes it immediately to the encrypted vault, independently of
+whether you later cancel the service dialog. **Values are shared globally by
+secret name**, across services, stacks, and environments: use different names
+when values must differ. Removing a name from a service does not delete the vault
+value. Use **Monitoring > View vault** to inspect, edit, or delete global secrets
+as well as monitoring credentials.
+
+Both generator and library generation prompt to unlock the vault if necessary.
+Missing or empty values block generation; no placeholders are generated. All
+values are encrypted in memory before stack generation writes any files, with
+plaintext passed to age through standard input, not a temporary file. Output is
+`secrets/<name>.age`, never `<name>.txt` or extensionless plaintext. Age encryption
+is randomized, so regenerating secrets can produce new ciphertext and commits
+even when values have not changed. The `secrets` directory gets a `.gitkeep` only
+when no secrets are configured.
+
+After replacement ciphertext files are successfully written, generation removes
+matching legacy `secrets/<name>` and `secrets/<name>.txt` files for the configured
+secrets. Unrelated files are not deleted. Imported source files elsewhere are not
+deleted either. **This does not erase plaintext from Git history or backups**;
+rotate any secret that was previously published. The application never puts
+vault contents or private keys in library exports or generated commits.
+Keep a secure separate backup of your vault, age identity, and master password.
+
+Compose continues to reference external Docker Swarm secrets by name. The
+deployment playbook must decrypt the `.age` files and create/update the external
+Swarm secrets; generation does not upload values directly to Docker.
 
 ## Semaphore Deployments
 
@@ -297,7 +347,7 @@ stacks/<env>/<stack-name>/
 │       ├── app.yml
 │       └── dynamic/
 │           └── routes.yml
-└── secrets/.gitkeep
+└── secrets/          # <name>.age files, or .gitkeep when no secrets are configured
 
 stacks/templates/      # shared Jinja snippets (created once, never overwritten)
 ├── common/logging.yml.j2

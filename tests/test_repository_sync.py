@@ -46,8 +46,13 @@ class RepositorySyncTests(unittest.TestCase):
 
     def generate_and_sync(self, overwrite=False):
         repository = RepositorySync.prepare(self.cfg)
-        created = generate_stack(self.cfg, overwrite=overwrite)
+        created = self.generate(overwrite)
         return repository.sync(self.cfg, created)
+
+    def generate(self, overwrite=False):
+        names = {name for service in self.cfg.services for name in service.secrets}
+        encrypted = {name: b"age-encryption.org/v1\nmock ciphertext\n" for name in names}
+        return generate_stack(self.cfg, overwrite=overwrite, encrypted_secrets=encrypted)
 
     def remote_head(self):
         return self.git("ls-remote", "origin", "refs/heads/main").split()[0]
@@ -65,8 +70,7 @@ class RepositorySyncTests(unittest.TestCase):
             "stacks/production/redis/compose.yml.j2",
             "stacks/production/redis/README.md",
             "stacks/production/redis/configs/.gitkeep",
-            "stacks/production/redis/secrets/.gitkeep",
-            "stacks/production/redis/secrets/password.txt",
+            "stacks/production/redis/secrets/password.age",
             "stacks/templates/common/logging.yml.j2",
         ):
             self.assertIn(expected, committed)
@@ -92,14 +96,14 @@ class RepositorySyncTests(unittest.TestCase):
 
     def test_ignored_new_files_are_not_added_but_tracked_ignored_files_update(self):
         self.generate_and_sync()
-        (self.root / ".gitignore").write_text("*.txt\nstack.yml\n", encoding="utf-8")
+        (self.root / ".gitignore").write_text("new_secret.age\nstack.yml\n", encoding="utf-8")
         self.cfg.description = "Updated description"
         self.cfg.services[0].port = "6380"
         self.cfg.services[0].secrets.append("new_secret")
         self.generate_and_sync(overwrite=True)
         tracked = self.git("ls-tree", "-r", "--name-only", "HEAD")
         self.assertIn("stacks/production/redis/stack.yml", tracked)
-        self.assertNotIn("new_secret.txt", tracked)
+        self.assertNotIn("new_secret.age", tracked)
         self.assertNotIn(".gitignore", tracked)
         self.assertIn("REDIS_PORT: 6380", self.git("show", "HEAD:stacks/production/redis/stack.yml"))
 
@@ -122,17 +126,20 @@ class RepositorySyncTests(unittest.TestCase):
         self.assertEqual(pending_head, self.git("rev-parse", "HEAD"))
         self.assertEqual(pending_head, self.remote_head())
 
-    def test_existing_secrets_and_shared_templates_are_not_committed(self):
-        generate_stack(self.cfg)
+    def test_plaintext_is_removed_but_existing_shared_templates_are_not_committed(self):
+        self.generate()
         secret = self.cfg.stack_dir / "secrets" / "password.txt"
         secret.write_text("existing-private-value", encoding="utf-8")
+        self.git("add", "--", str(secret))
+        self.git("commit", "-m", "Legacy secret stub")
         template = self.cfg.templates_dir / "common" / "logging.yml.j2"
         template.write_text("custom existing template", encoding="utf-8")
         self.generate_and_sync(overwrite=True)
         tracked = self.git("ls-tree", "-r", "--name-only", "HEAD")
         self.assertNotIn("secrets/password.txt", tracked)
         self.assertNotIn("templates/common/logging.yml.j2", tracked)
-        self.assertEqual(secret.read_text(encoding="utf-8"), "existing-private-value")
+        self.assertFalse(secret.exists())
+        self.assertIn("secrets/password.age", tracked)
         self.assertEqual(template.read_text(encoding="utf-8"), "custom existing template")
 
     def test_missing_upstream_and_detached_head_fail_before_generation(self):
@@ -156,7 +163,7 @@ class RepositorySyncTests(unittest.TestCase):
 
     def test_branch_change_is_rejected(self):
         repository = RepositorySync.prepare(self.cfg)
-        created = generate_stack(self.cfg)
+        created = self.generate()
         self.git("switch", "-c", "different")
         with self.assertRaisesRegex(RepositorySyncError, "branch changed"):
             repository.sync(self.cfg, created)
@@ -165,7 +172,7 @@ class RepositorySyncTests(unittest.TestCase):
         self.cfg.stack_dir.mkdir(parents=True)
         self.git("init", str(self.cfg.stack_dir))
         repository = RepositorySync.prepare(self.cfg)
-        created = generate_stack(self.cfg, overwrite=True)
+        created = self.generate(overwrite=True)
         with self.assertRaisesRegex(RepositorySyncError, "nested repository"):
             repository.sync(self.cfg, created)
         self.assertEqual(self.git("diff", "--cached", "--name-only"), "")
@@ -184,7 +191,7 @@ class RepositorySyncTests(unittest.TestCase):
 
     def test_non_fast_forward_does_not_pull_or_force_push(self):
         repository = RepositorySync.prepare(self.cfg)
-        created = generate_stack(self.cfg)
+        created = self.generate()
         original = self.git("rev-parse", "HEAD")
         tree = self.git("rev-parse", "HEAD^{tree}")
         competing = self.git("commit-tree", tree, "-p", original, "-m", "Competing remote commit")
