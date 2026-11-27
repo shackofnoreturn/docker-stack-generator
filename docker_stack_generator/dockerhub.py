@@ -44,6 +44,27 @@ def search(query: str, page_size: int = 15) -> list[dict]:
         raise ConnectionError(f"Docker Hub search failed: {exc}") from exc
 
 
+def format_search_result(result: dict) -> tuple[str, str]:
+    """Return visible list text and a complete tooltip for a search result."""
+    name = result.get("name", "")
+    official = " ✓" if result.get("official") else ""
+    stars = result.get("star_count", 0) or 0
+    description = result.get("short_description", "") or ""
+
+    text = f"{name}{official}"
+    if stars:
+        text += f"\n★ {stars:,}"
+    if description:
+        text += f"\n{description[:80]}"
+
+    tooltip = f"{name}{official}"
+    if stars:
+        tooltip += f"\n★ {stars:,}"
+    if description:
+        tooltip += f"\n{description}"
+    return text, tooltip
+
+
 # ---------------------------------------------------------------------------
 # Registry auth + manifest inspection
 # ---------------------------------------------------------------------------

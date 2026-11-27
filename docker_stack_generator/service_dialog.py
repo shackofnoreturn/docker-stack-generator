@@ -58,6 +58,7 @@ from docker_stack_generator.highlighter import ConfigFileHighlighter
 from docker_stack_generator.credential_vault import CredentialVault
 from docker_stack_generator.secret_widgets import edit_secret
 from docker_stack_generator.age_secrets import validate_secret_name
+from docker_stack_generator.dockerhub import format_search_result
 
 
 # ---------------------------------------------------------------------------
@@ -755,6 +756,7 @@ class ServiceDialog(QDialog):
 
         self._result_list = QListWidget()
         self._result_list.setAlternatingRowColors(True)
+        self._result_list.setWordWrap(True)
         self._result_list.itemClicked.connect(self._on_result_selected)
         lv.addWidget(self._result_list, 1)
 
@@ -812,7 +814,7 @@ class ServiceDialog(QDialog):
 
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(1, 1)
 
         # ---- Dialog buttons -----------------------------------------------
         btn_box = QDialogButtonBox(
@@ -1193,13 +1195,9 @@ class ServiceDialog(QDialog):
             self._search_status.setText("No results found.")
             return
         for r in results:
-            official = " ✓" if r.get("official") else ""
-            stars = r.get("star_count", 0) or 0
-            stars_str = f" ★{stars:,}" if stars else ""
-            text = f"{r['name']}{official}{stars_str}"
-            if r.get("short_description"):
-                text += f"\n  {r['short_description'][:80]}"
+            text, tooltip = format_search_result(r)
             item = QListWidgetItem(text)
+            item.setToolTip(tooltip)
             item.setData(Qt.ItemDataRole.UserRole, r)
             self._result_list.addItem(item)
         self._search_status.setText(f"{len(results)} result(s). Click one to select.")
