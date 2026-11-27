@@ -15,7 +15,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 - **Traefik labels** — per-service tab with service-based router, hostname, backend port variable, and editable routing settings
 - **Homepage labels** — per-service tab with customizable group, name, icon, URL, and description
 - **Service configuration files** — import or create files, edit UTF-8 text, and add nested subdirectories under `configs/<service>/`
-- **Semaphore deployments** - launch configured playbooks, monitor task status and output, resume saved runs, and check service endpoint reachability
+- **Semaphore deployments** - launch configured playbooks, monitor task status and execution output, and resume saved runs
 - **Preview** — live `stack.yml` and `compose.yml.j2` preview before writing any files
 - **Generate & Sync** — generate a stack, commit generated files in the destination repository, and push to its upstream branch
 - **Stack monitoring** - periodically check HTTP(S) endpoints for saved stacks and services, with encrypted per-service authentication
@@ -250,34 +250,19 @@ playbook. Monitoring also pauses after 30 minutes or five consecutive polling
 errors; **Refresh task** reconnects and resumes it. Closing the app leaves remote
 tasks running. Wait for in-flight network requests to finish before closing.
 
-### Service Reachability
-
-Endpoint checks run after a successful **Deploy** action when enabled, or via
-**Check services**. Saved service Homepage URLs are suggested automatically;
-default Traefik URLs are suggested where no custom router rule is present.
-Otherwise enter one HTTP(S) URL per line, optionally as `service=https://host/health`.
-Set **DOMAIN** to resolve `${DOMAIN}` in suggested URLs. Endpoint lists are saved
-per environment/stack. Non-HTTP services need an appropriate HTTP health endpoint
-or separate checks in the playbook.
-
-Checks retry every ten seconds for approximately three minutes while services
-start. The table distinguishes successful HTTP responses, authentication-required
-responses, redirects with unverified destinations, TLS errors, HTTP errors, and
-connection/DNS/timeout failures. You can pause checks, adjust URLs, and retry.
-
-These are checks **from the machine running this app**, not from inside the Swarm.
-A reachable endpoint does not verify replica counts, container health, or application
-correctness, and a successful playbook does not guarantee endpoint readiness.
-Prefer service-specific health URLs; use the playbook output and Semaphore task
-details for deployment diagnostics. No live Swarm inspection is performed.
+Service endpoint checks are managed exclusively in the main **Monitoring** tab.
+Deployments does not run automatic service checks after a successful playbook;
+its remaining space is dedicated to Semaphore execution output. A successful
+playbook does not guarantee service health. Use **Monitoring** to check service
+endpoints independently.
 
 ### Additional Playbooks
 
 Targets can also map actions such as **Remove**, **Backup**, **Restore**, or **Move**
 to your own Semaphore templates, with extra survey variables for their inputs.
 Every action requires confirmation and uses the same status/log monitoring.
-Only actions named **Deploy** start automatic endpoint checks. The application
-does not supply these playbooks or implement backup/restore semantics itself.
+The application does not supply these playbooks or implement backup/restore
+semantics itself.
 
 ## Generated Output
 
