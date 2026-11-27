@@ -98,7 +98,6 @@ Never:
 
 - Delete large parts of the codebase without justification.
 - Remove tests simply to make builds succeed.
-- Disable security controls.
 - Commit secrets, credentials, tokens, certificates, or passwords.
 - Modify CI/CD pipelines unless required by the task.
 - Push directly to protected branches.
