@@ -44,6 +44,10 @@ In VS Code, use **Terminal > Run Task > Install prerequisites** to install the
 application and its declared dependencies into the `python` environment on your PATH.
 Use **Run application** to launch the GUI from the workspace directory.
 
+Navigate using the main tabs. **Edit > Settings** (`Ctrl+,`) opens settings,
+and **File > New Stack** (`Ctrl+N`) starts a fresh stack. There is no separate
+navigation toolbar or Settings tab.
+
 ## Stack Monitoring
 
 Open **Monitoring** to see all stacks and services saved in **Stack Library**,
@@ -191,8 +195,13 @@ Imported files are saved with the stack, so the original files are not needed
 when generating the stack later or on another machine after importing that stack.
 
 Select a file to edit its UTF-8 text. Binary files are preserved without editing.
+The text editor uses a monospace font and syntax highlighting for common
+configuration syntax, including YAML/Jinja2, JSON, INI, and key/value settings.
 Double-click a file path to rename it or move it into a relative subdirectory.
-Use the Subdirectories list for additional folders, including empty ones.
+Set **Destination subdirectory** before importing or creating files to place
+them in a nested folder; parent directories are created automatically. The
+separate Subdirectories panel has been removed. Empty directories in previously
+saved definitions are still preserved when editing and generating those stacks.
 
 Generation writes files under `configs/<service-name>/` and creates their parent
 directories. For example, a Traefik service can contain `traefik.yml` alongside
@@ -302,4 +311,4 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
 
 # Todo
 
-- [ ] Create a new branch named general-tweaks. I want the config files I add to be syntax highlighted aswell. Also the bottom "Subdirectories" part is a bit weird because we can already define the destination subdirectory up top. So a bit redundant and should go. Also the very top has "New Stack" - "Stack Library" - "Templates" - "Settings" buttons which is also redundant because we already have the row of tabs below it. Those need to go aswell. I can already access the settings in the edit menu so that is sufficient, don't create a settings tab to replace the button. To finnish off I need the tabs Deployments and Monitoring to have icons too like the other tabs.
+- [x] Create a new branch named general-tweaks. I want the config files I add to be syntax highlighted aswell. Also the bottom "Subdirectories" part is a bit weird because we can already define the destination subdirectory up top. So a bit redundant and should go. Also the very top has "New Stack" - "Stack Library" - "Templates" - "Settings" buttons which is also redundant because we already have the row of tabs below it. Those need to go aswell. I can already access the settings in the edit menu so that is sufficient, don't create a settings tab to replace the button. To finnish off I need the tabs Deployments and Monitoring to have icons too like the other tabs.

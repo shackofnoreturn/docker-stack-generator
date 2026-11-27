@@ -107,3 +107,21 @@ class Jinja2YamlHighlighter(QSyntaxHighlighter):
             while it.hasNext():
                 match = it.next()
                 self.setFormat(match.capturedStart(group), match.capturedLength(group), fmt)
+
+
+class ConfigFileHighlighter(Jinja2YamlHighlighter):
+    """Highlight common configuration syntax alongside YAML and Jinja2."""
+
+    def __init__(self, document):
+        super().__init__(document)
+        self._rules[0:0] = [
+            (QRegularExpression(r"^\s*(\[[^\]\n]+\])"), _fmt("#c678dd", bold=True), 1),
+            (QRegularExpression(r"^\s*([A-Za-z_][\w.-]*)(?=\s*=)"), _fmt("#61afef", bold=True), 1),
+            (QRegularExpression(r"\b(?:true|false|null|yes|no|on|off)\b"), _fmt("#d19a66"), 0),
+            (QRegularExpression(r"\b\d+(?:\.\d+)?\b"), _fmt("#d19a66"), 0),
+            (QRegularExpression(r"</?[\w:.-]+|/?>"), _fmt("#e06c75"), 0),
+        ]
+        self._rules.extend([
+            (QRegularExpression(r'("(?:\\.|[^"\\])*")(?=\s*:)'), _fmt("#61afef", bold=True), 1),
+            (QRegularExpression(r"^\s*;.*$"), _fmt("#7f848e", italic=True), 0),
+        ])

@@ -9,6 +9,7 @@ import re
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -52,6 +53,7 @@ from docker_stack_generator.generator import (
     validate_service_configs,
 )
 from docker_stack_generator.widgets import MetadataWorker, ProfileSelector, SearchWorker
+from docker_stack_generator.highlighter import ConfigFileHighlighter
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +503,7 @@ class _EnvironmentEditor(QWidget):
 class _ConfigFilesEditor(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._config_directories: list[str] = []
         layout = QVBoxLayout(self)
         self._destination = QLabel("configs/<service>/")
         layout.addWidget(self._destination)
@@ -531,17 +534,18 @@ class _ConfigFilesEditor(QWidget):
         layout.addWidget(self._files, 1)
         self._contents = QTextEdit()
         self._contents.setAcceptRichText(False)
+        font = QFont("Monospace", 10)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self._contents.setFont(font)
+        self._contents.setStyleSheet(
+            "QTextEdit { background: #282c34; color: #abb2bf; }"
+        )
+        self._highlighter = ConfigFileHighlighter(self._contents.document())
         self._contents.setReadOnly(True)
         self._contents.setToolTip("UTF-8 text contents. Imported binary files are preserved without editing.")
         layout.addWidget(self._contents, 2)
         self._files.currentItemChanged.connect(self._show_contents)
         self._contents.textChanged.connect(self._update_contents)
-
-        directories = QGroupBox("Subdirectories")
-        directory_layout = QVBoxLayout(directories)
-        self._directories = _TagListEditor("e.g. dynamic or dynamic/middlewares", max_height=70)
-        directory_layout.addWidget(self._directories)
-        layout.addWidget(directories)
 
     def _append(self, path: str, contents: str):
         item = QListWidgetItem(path)
@@ -557,7 +561,7 @@ class _ConfigFilesEditor(QWidget):
         if path.casefold() in {entry.casefold() for entry in files}:
             raise ValueError(f"Configuration file already exists: {path}")
         encoded = base64.b64encode(contents).decode("ascii")
-        validate_service_configs({**files, path: encoded}, self._directories.values())
+        validate_service_configs({**files, path: encoded}, self._config_directories)
         self._files.setCurrentItem(self._append(path, encoded))
 
     def _import_files(self):
@@ -607,7 +611,7 @@ class _ConfigFilesEditor(QWidget):
         self._files.clear()
         for path, contents in files.items():
             self._append(path, contents)
-        self._directories.set_values(directories)
+        self._config_directories = list(directories)
 
     def values(self) -> tuple[dict[str, str], list[str]]:
         files = {}
@@ -617,7 +621,7 @@ class _ConfigFilesEditor(QWidget):
             if path in files:
                 raise ValueError(f"Duplicate configuration file: {path}")
             files[path] = item.data(Qt.ItemDataRole.UserRole)
-        directories = self._directories.values()
+        directories = list(self._config_directories)
         validate_service_configs(files, directories)
         return files, directories
 
@@ -1294,4 +1298,3 @@ class ServiceDialog(QDialog):
             config_files=config_files,
             config_directories=config_directories,
         )
-

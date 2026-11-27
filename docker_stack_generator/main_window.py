@@ -27,7 +27,6 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QTabWidget,
     QTextEdit,
-    QToolBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -60,7 +59,6 @@ class MainWindow(QMainWindow):
         self._generate_worker: Optional[GenerateWorker] = None
 
         self._build_menu()
-        self._build_toolbar()
         self._build_ui()
         self._restore_geometry()
         self._check_settings()
@@ -133,38 +131,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_act)
 
     # ------------------------------------------------------------------
-    # Toolbar
-    # ------------------------------------------------------------------
-
-    def _build_toolbar(self):
-        tb = QToolBar("Main")
-        tb.setMovable(False)
-        self.addToolBar(tb)
-
-        new_btn = QPushButton("🗋  New Stack")
-        new_btn.clicked.connect(self._reset_form)
-        tb.addWidget(new_btn)
-
-        tb.addSeparator()
-
-        lib_btn = QPushButton("📚  Stack Library")
-        lib_btn.setToolTip("Open Stack Library (Ctrl+2)")
-        lib_btn.clicked.connect(lambda: self._tabs.setCurrentIndex(1))
-        tb.addWidget(lib_btn)
-
-        tpl_btn = QPushButton("📂  Templates")
-        tpl_btn.setToolTip("Open Template Library (Ctrl+3)")
-        tpl_btn.clicked.connect(lambda: self._tabs.setCurrentIndex(2))
-        tb.addWidget(tpl_btn)
-
-        tb.addSeparator()
-
-        settings_btn = QPushButton("⚙  Settings")
-        settings_btn.clicked.connect(self._open_settings)
-        tb.addWidget(settings_btn)
-
-    # ------------------------------------------------------------------
-    # Central UI  —  three tabs
+    # Central UI
     # ------------------------------------------------------------------
 
     def _build_ui(self):
@@ -195,9 +162,9 @@ class MainWindow(QMainWindow):
         self._tpl_manager = TemplateManagerWidget()
         self._tabs.addTab(self._tpl_manager, "📂  Template Library")
         self._deployment_widget = DeploymentWidget()
-        self._tabs.addTab(self._deployment_widget, "Deployments")
+        self._tabs.addTab(self._deployment_widget, "🚀  Deployments")
         self._monitoring_widget = MonitoringWidget()
-        self._tabs.addTab(self._monitoring_widget, "Monitoring")
+        self._tabs.addTab(self._monitoring_widget, "📊  Monitoring")
         self._tabs.currentChanged.connect(
             lambda index: self._deployment_widget.refresh_stacks() if index == 3 else None
         )
