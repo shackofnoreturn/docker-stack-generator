@@ -39,6 +39,7 @@ class NavigationTests(unittest.TestCase):
         def widget():
             result = QWidget()
             result.load_requested = Mock()
+            result.generate_requested = Mock()
             result.refresh_stacks = Mock()
             return result
 

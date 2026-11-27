@@ -312,3 +312,11 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
 # Todo
 
 - [x] Create a new branch named general-tweaks. I want the config files I add to be syntax highlighted aswell. Also the bottom "Subdirectories" part is a bit weird because we can already define the destination subdirectory up top. So a bit redundant and should go. Also the very top has "New Stack" - "Stack Library" - "Templates" - "Settings" buttons which is also redundant because we already have the row of tabs below it. Those need to go aswell. I can already access the settings in the edit menu so that is sufficient, don't create a settings tab to replace the button. To finnish off I need the tabs Deployments and Monitoring to have icons too like the other tabs.
+In **Stack Library**, select a saved stack and use **Generate Stack** directly
+to the right of **Load into Generator**, or choose **Generate & Sync** from its
+dropdown. This uses the saved definition without switching tabs or replacing
+unsaved work in the generator. The saved stacks root is used when present;
+otherwise the current Settings root is used, matching the library's target path.
+Existing output requires overwrite confirmation. Both generation buttons are
+disabled while generation or sync is running, and the library's last-generated
+timestamp is refreshed on completion.

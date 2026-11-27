@@ -4,6 +4,8 @@ Main application window.
 from __future__ import annotations
 
 import os
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -18,16 +20,13 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSizePolicy,
     QSplitter,
     QStatusBar,
     QTabWidget,
     QTextEdit,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -47,7 +46,7 @@ from docker_stack_generator.settings_dialog import SettingsDialog
 from docker_stack_generator.stack_library import SavedStack, stack_library
 from docker_stack_generator.stack_library_widget import StackLibraryWidget
 from docker_stack_generator.template_manager import TemplateManagerWidget
-from docker_stack_generator.widgets import GenerateWorker, HSeparator
+from docker_stack_generator.widgets import GenerateButton, GenerateWorker, HSeparator
 
 
 class MainWindow(QMainWindow):
@@ -156,6 +155,7 @@ class MainWindow(QMainWindow):
         # ---- Tab 2: Stack Library ------------------------------------------
         self._stack_library_widget = StackLibraryWidget()
         self._stack_library_widget.load_requested.connect(self._load_from_library)
+        self._stack_library_widget.generate_requested.connect(self._generate_from_library)
         self._tabs.addTab(self._stack_library_widget, "📚  Stack Library")
 
         # ---- Tab 3: Template Library ---------------------------------------
@@ -288,28 +288,8 @@ class MainWindow(QMainWindow):
         save_lib_btn.clicked.connect(self._save_to_library)
         action_row.addWidget(save_lib_btn)
 
-        gen_btn = QToolButton()
-        generate_action = QAction("🚀  Generate Stack", self)
-        generate_action.triggered.connect(lambda: self._generate())
-        gen_btn.setDefaultAction(generate_action)
-        gen_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        gen_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        gen_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        generate_menu = QMenu(gen_btn)
-        generate_menu.addAction(generate_action)
-        self._generate_sync_action = generate_menu.addAction("Generate && Sync")
-        self._generate_sync_action.setToolTip(
-            "Generate files, commit only generated files, and push to the destination branch's upstream"
-        )
-        self._generate_sync_action.triggered.connect(lambda: self._generate(sync=True))
-        gen_btn.setMenu(generate_menu)
-        gen_btn.setMinimumHeight(40)
-        gen_btn.setStyleSheet(
-            "QToolButton { background: #2a7ae2; color: white; font-weight: bold; border-radius: 5px; padding: 0 20px 0 8px; }"
-            "QToolButton:hover { background: #1a5fc5; }"
-            "QToolButton:disabled { background: #aaa; }"
-            "QToolButton::menu-button { width: 20px; border-left: 1px solid #fff; }"
-        )
+        gen_btn = GenerateButton(lambda: self._generate(), lambda: self._generate(sync=True), self)
+        self._generate_sync_action = gen_btn.sync_action
         self._generate_btn = gen_btn
         action_row.addWidget(gen_btn, 1)
 
@@ -612,7 +592,21 @@ class MainWindow(QMainWindow):
 
         cfg = self._build_stack_config(name, name_raw)
         overwrite = self._overwrite_check.isChecked()
+        self._start_generation(cfg, overwrite, sync)
 
+    def _generate_from_library(self, saved: SavedStack, sync: bool):
+        cfg = replace(deepcopy(saved.config), stacks_root=saved.config.stacks_root or settings.stacks_root)
+        self._start_generation(cfg, overwrite=False, sync=sync)
+
+    def _start_generation(self, cfg: StackConfig, overwrite: bool, sync: bool):
+        if self._generate_worker is not None and self._generate_worker.isRunning():
+            return
+        if not cfg.name or not cfg.services:
+            QMessageBox.warning(self, "Validation", "The stack needs a name and at least one service.")
+            return
+        if not cfg.stacks_root:
+            QMessageBox.warning(self, "Settings required", "Please configure the stacks root directory in Settings first.")
+            return
         if cfg.stack_dir.exists() and not overwrite:
             reply = QMessageBox.question(
                 self,
@@ -625,6 +619,7 @@ class MainWindow(QMainWindow):
             overwrite = True
 
         self._generate_btn.setEnabled(False)
+        self._stack_library_widget.set_generation_busy(True)
         self._status.showMessage("Generating and syncing stack…" if sync else "Generating stack…")
 
         self._generate_worker = GenerateWorker(cfg, overwrite, sync=sync)
@@ -634,6 +629,7 @@ class MainWindow(QMainWindow):
 
     def _on_generate_done(self, created: list[str]):
         self._generate_btn.setEnabled(True)
+        self._stack_library_widget.set_generation_busy(False)
         worker = self._generate_worker
         if worker is None:
             return
@@ -664,6 +660,7 @@ class MainWindow(QMainWindow):
 
     def _on_generate_error(self, msg: str):
         self._generate_btn.setEnabled(True)
+        self._stack_library_widget.set_generation_busy(False)
         QMessageBox.critical(self, "Generation Error", msg)
         self._status.showMessage("Generation failed.")
 

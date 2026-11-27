@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 from docker_stack_generator.config import settings
 from docker_stack_generator.generator import slugify
 from docker_stack_generator.stack_library import SavedStack, stack_library
-from docker_stack_generator.widgets import HSeparator
+from docker_stack_generator.widgets import GenerateButton, HSeparator
 
 
 def _fmt_ts(ts: Optional[str]) -> str:
@@ -91,11 +91,13 @@ class StackLibraryWidget(QWidget):
     """
 
     load_requested = pyqtSignal(object)  # SavedStack
+    generate_requested = pyqtSignal(object, bool)  # SavedStack, sync
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._entries: list[SavedStack] = []
         self._current: Optional[SavedStack] = None
+        self._generation_busy = False
         self._build_ui()
 
     def _build_ui(self):
@@ -240,6 +242,13 @@ class StackLibraryWidget(QWidget):
         self._load_btn.clicked.connect(self._load_selected)
         actions.addWidget(self._load_btn)
 
+        self._generate_btn = GenerateButton(
+            lambda: self._generate_selected(), lambda: self._generate_selected(sync=True), self
+        )
+        self._generate_btn.setMinimumHeight(36)
+        self._generate_btn.setEnabled(False)
+        actions.addWidget(self._generate_btn)
+
         self._dup_btn = QPushButton("📋  Duplicate…")
         self._dup_btn.setEnabled(False)
         self._dup_btn.clicked.connect(self._duplicate_selected)
@@ -369,6 +378,7 @@ class StackLibraryWidget(QWidget):
             self._svc_table.setItem(row, 4, QTableWidgetItem(svc.resource_profile))
 
         self._load_btn.setEnabled(True)
+        self._generate_btn.setEnabled(not self._generation_busy)
         self._dup_btn.setEnabled(True)
         self._del_btn.setEnabled(True)
 
@@ -382,6 +392,7 @@ class StackLibraryWidget(QWidget):
         self._lbl_generated.setText("—")
         self._svc_table.setRowCount(0)
         self._load_btn.setEnabled(False)
+        self._generate_btn.setEnabled(False)
         self._dup_btn.setEnabled(False)
         self._open_btn.setEnabled(False)
         self._del_btn.setEnabled(False)
@@ -394,6 +405,14 @@ class StackLibraryWidget(QWidget):
         if not self._current:
             return
         self.load_requested.emit(self._current)
+
+    def set_generation_busy(self, busy: bool):
+        self._generation_busy = busy
+        self._generate_btn.setEnabled(self._current is not None and not busy)
+
+    def _generate_selected(self, sync: bool = False):
+        if self._current is not None and not self._generation_busy:
+            self.generate_requested.emit(self._current, sync)
 
     def _duplicate_selected(self):
         if not self._current:
