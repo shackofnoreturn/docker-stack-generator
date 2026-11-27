@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
 from docker_stack_generator.config import settings
 from docker_stack_generator.deployment_widget import DeploymentWidget
 from docker_stack_generator.monitoring_widget import MonitoringWidget
+from docker_stack_generator.new_stack_dialog import NewStackDialog
 from docker_stack_generator.generator import (
     GenerationError,
     ServiceConfig,
@@ -76,7 +77,7 @@ class MainWindow(QMainWindow):
         file_menu = menu.addMenu("&File")
         new_act = QAction("&New Stack", self)
         new_act.setShortcut("Ctrl+N")
-        new_act.triggered.connect(self._reset_form)
+        new_act.triggered.connect(lambda: self._new_stack())
         file_menu.addAction(new_act)
 
         save_lib_act = QAction("💾 &Save to Library", self)
@@ -162,6 +163,7 @@ class MainWindow(QMainWindow):
         self._stack_library_widget.generate_requested.connect(self._generate_from_library)
         self._stack_library_widget.edit_service_requested.connect(self._edit_library_service)
         self._stack_library_widget.edit_stack_requested.connect(self._edit_library_stack)
+        self._stack_library_widget.new_stack_requested.connect(self._new_stack)
         self._tabs.addTab(self._stack_library_widget, "📚  Stack Library")
 
         # ---- Tab 3: Template Library ---------------------------------------
@@ -797,7 +799,11 @@ class MainWindow(QMainWindow):
     # Form reset
     # ------------------------------------------------------------------
 
-    def _reset_form(self):
+    def _new_stack(self):
+        dlg = NewStackDialog(settings.stacks_env, self)
+        if not dlg.exec():
+            return
+
         if self._services:
             reply = QMessageBox.question(
                 self,
@@ -807,10 +813,12 @@ class MainWindow(QMainWindow):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
+
+        display_name, environment, description = dlg.values()
         self._loaded_stack_identity = None
-        self._stack_name_input.clear()
-        self._env_input.setText(settings.stacks_env)
-        self._description_input.clear()
+        self._stack_name_input.setText(display_name)
+        self._env_input.setText(environment)
+        self._description_input.setPlainText(description)
         self._services.clear()
         self._refresh_services_list()
         self._preview_rendered.clear()
@@ -818,7 +826,10 @@ class MainWindow(QMainWindow):
         self._preview_stack_yml.clear()
         self._overwrite_check.setChecked(False)
         self._tabs.setCurrentIndex(0)
-        self._status.showMessage("Ready.")
+        self._status.showMessage(f"New stack '{display_name}' is ready for services.")
+
+    def _reset_form(self):
+        self._new_stack()
 
     # ------------------------------------------------------------------
     # Geometry persistence

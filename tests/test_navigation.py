@@ -40,6 +40,9 @@ class NavigationTests(unittest.TestCase):
             result = QWidget()
             result.load_requested = Mock()
             result.generate_requested = Mock()
+            result.edit_service_requested = Mock()
+            result.edit_stack_requested = Mock()
+            result.new_stack_requested = Mock()
             result.refresh_stacks = Mock()
             return result
 
@@ -58,3 +61,4 @@ class NavigationTests(unittest.TestCase):
             self.assertFalse(any("Settings" in label for label in labels))
         finally:
             window.deleteLater()
+

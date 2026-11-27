@@ -102,6 +102,7 @@ class StackLibraryWidget(QWidget):
     generate_requested = pyqtSignal(object, bool)  # SavedStack, sync
     edit_service_requested = pyqtSignal(object, int)  # SavedStack, service index
     edit_stack_requested = pyqtSignal(object)  # SavedStack
+    new_stack_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -158,6 +159,12 @@ class StackLibraryWidget(QWidget):
         refresh_btn.setStyleSheet(_btn_style)
         refresh_btn.clicked.connect(self.refresh)
         hb.addWidget(refresh_btn)
+
+        new_stack_btn = QPushButton("＋  New Stack")
+        new_stack_btn.setStyleSheet(_btn_style)
+        new_stack_btn.setToolTip("Start a new stack in the Stack Generator")
+        new_stack_btn.clicked.connect(lambda: self.new_stack_requested.emit())
+        hb.addWidget(new_stack_btn)
 
         root.addWidget(header)
 
