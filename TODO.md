@@ -21,7 +21,7 @@ At the moment I need to check out the documentation myself and check which ones 
 Image-declared Docker Hub volumes can now be suggested as runtime directories and matching data mounts.
 
 
-- [ ] Make a vscode task which installs a shortcut on my omarchy machine so I can run it by going to the applications menu. Also make sure it has an icon. 
+- [x] Make a vscode task which installs a shortcut on my omarchy machine so I can run it by going to the applications menu. Also make sure it has an icon.
 
 
 - [ ] When searching Docker Hub for an image for my service the image names in the list are cut off short. Sometime the name is cut off or the star number amount. It needs some more characters to be show.
@@ -37,3 +37,4 @@ Image-declared Docker Hub volumes can now be suggested as runtime directories an
 
 
 - [ ] In the Stack manager tab I would like to be able to create a new stack by clicking a button and opening a new dialog. This would also be the case when I go to file -> new.
+
