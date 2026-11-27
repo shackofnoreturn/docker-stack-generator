@@ -154,19 +154,30 @@ class MetadataWorker(QThread):
 
 
 class GenerateWorker(QThread):
-    """Background stack generation."""
+    """Background stack generation with optional repository commit and push."""
     done = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, cfg, overwrite: bool):
+    def __init__(self, cfg, overwrite: bool, sync: bool = False):
         super().__init__()
         self.cfg = cfg
         self.overwrite = overwrite
+        self.sync = sync
+        self.sync_result = ""
+        self.sync_error = ""
 
     def run(self):
         from docker_stack_generator import generator
+        from docker_stack_generator.repository_sync import RepositorySync, RepositorySyncError
         try:
+            repository = RepositorySync.prepare(self.cfg) if self.sync else None
             created = generator.generate_stack(self.cfg, overwrite=self.overwrite)
-            self.done.emit(created)
         except Exception as exc:
             self.error.emit(str(exc))
+            return
+        if repository is not None:
+            try:
+                self.sync_result = repository.sync(self.cfg, created)
+            except RepositorySyncError as exc:
+                self.sync_error = str(exc)
+        self.done.emit(created)

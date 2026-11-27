@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QTextEdit,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -313,14 +315,28 @@ class MainWindow(QMainWindow):
         save_lib_btn.clicked.connect(self._save_to_library)
         action_row.addWidget(save_lib_btn)
 
-        gen_btn = QPushButton("🚀  Generate Stack")
+        gen_btn = QToolButton()
+        generate_action = QAction("🚀  Generate Stack", self)
+        generate_action.triggered.connect(lambda: self._generate())
+        gen_btn.setDefaultAction(generate_action)
+        gen_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        gen_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        gen_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        generate_menu = QMenu(gen_btn)
+        generate_menu.addAction(generate_action)
+        self._generate_sync_action = generate_menu.addAction("Generate && Sync")
+        self._generate_sync_action.setToolTip(
+            "Generate files, commit only generated files, and push to the destination branch's upstream"
+        )
+        self._generate_sync_action.triggered.connect(lambda: self._generate(sync=True))
+        gen_btn.setMenu(generate_menu)
         gen_btn.setMinimumHeight(40)
         gen_btn.setStyleSheet(
-            "QPushButton { background: #2a7ae2; color: white; font-weight: bold; border-radius: 5px; }"
-            "QPushButton:hover { background: #1a5fc5; }"
-            "QPushButton:disabled { background: #aaa; }"
+            "QToolButton { background: #2a7ae2; color: white; font-weight: bold; border-radius: 5px; padding: 0 20px 0 8px; }"
+            "QToolButton:hover { background: #1a5fc5; }"
+            "QToolButton:disabled { background: #aaa; }"
+            "QToolButton::menu-button { width: 20px; border-left: 1px solid #fff; }"
         )
-        gen_btn.clicked.connect(self._generate)
         self._generate_btn = gen_btn
         action_row.addWidget(gen_btn, 1)
 
@@ -600,7 +616,9 @@ class MainWindow(QMainWindow):
     # Generate
     # ------------------------------------------------------------------
 
-    def _generate(self):
+    def _generate(self, sync: bool = False):
+        if self._generate_worker is not None and self._generate_worker.isRunning():
+            return
         name_raw = self._stack_name_input.text().strip()
         name = slugify(name_raw)
 
@@ -634,18 +652,20 @@ class MainWindow(QMainWindow):
             overwrite = True
 
         self._generate_btn.setEnabled(False)
-        self._status.showMessage("Generating stack…")
+        self._status.showMessage("Generating and syncing stack…" if sync else "Generating stack…")
 
-        self._generate_worker = GenerateWorker(cfg, overwrite)
+        self._generate_worker = GenerateWorker(cfg, overwrite, sync=sync)
         self._generate_worker.done.connect(self._on_generate_done)
         self._generate_worker.error.connect(self._on_generate_error)
         self._generate_worker.start()
 
     def _on_generate_done(self, created: list[str]):
         self._generate_btn.setEnabled(True)
-        name_raw = self._stack_name_input.text().strip()
-        name = slugify(name_raw)
-        cfg = self._build_stack_config(name, name_raw)
+        worker = self._generate_worker
+        if worker is None:
+            return
+        cfg = worker.cfg
+        name = cfg.name
         path = str(cfg.stack_dir)
         settings.add_recent_stack(name, path)
         stack_library.save_stack(cfg, generated=True)
@@ -653,12 +673,21 @@ class MainWindow(QMainWindow):
         self._stack_library_widget.refresh()
 
         created_str = "\n".join(f"  • {p}" for p in created)
+        if worker.sync_error:
+            QMessageBox.warning(
+                self, "Stack Generated - Sync Failed",
+                f"Stack '{cfg.environment}/{name}' was generated at:\n{path}\n"
+                f"and saved to Stack Library, but repository sync failed.\n\n{worker.sync_error}",
+            )
+            self._status.showMessage(f"Stack '{name}' generated, but sync failed.")
+            return
+        sync_note = f"\n\n{worker.sync_result}" if worker.sync else ""
         QMessageBox.information(
             self,
-            "Stack Generated!",
-            f"Stack scaffold created successfully and saved to Stack Library.\n\nFiles written to:\n  {path}\n\n{created_str}",
+            "Stack Generated & Synced!" if worker.sync else "Stack Generated!",
+            f"Stack scaffold created successfully and saved to Stack Library.\n\nFiles written to:\n  {path}\n\n{created_str}{sync_note}",
         )
-        self._status.showMessage(f"Stack '{name}' generated at {path}")
+        self._status.showMessage(f"Stack '{name}' generated at {path}{sync_note}")
 
     def _on_generate_error(self, msg: str):
         self._generate_btn.setEnabled(True)
@@ -745,6 +774,10 @@ class MainWindow(QMainWindow):
                 pass
 
     def closeEvent(self, event):
+        if self._generate_worker is not None and self._generate_worker.isRunning():
+            QMessageBox.warning(self, "Generation in progress", "Wait for generation and repository sync to finish before closing.")
+            event.ignore()
+            return
         if not self._deployment_widget.prepare_close():
             event.ignore()
             return
@@ -782,4 +815,3 @@ class MainWindow(QMainWindow):
     def _export_csv(self):
         self._tabs.setCurrentIndex(1)
         self._stack_library_widget._export_csv()
-
