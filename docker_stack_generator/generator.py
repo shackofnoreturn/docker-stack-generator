@@ -622,29 +622,16 @@ HEALTHCHECK_HTTP = """\
 """
 
 
-def _write_if_missing(path: Path, content: str) -> None:
-    if not path.exists():
-        path.write_text(content, encoding="utf-8")
-
-
-def ensure_shared_templates(templates_dir: Path) -> None:
-    """Create shared Jinja template snippets under templates_dir if they don't exist."""
-    dirs = ["policies", "resources", "common", "labels", "placement", "healthchecks", "mounts"]
-    for d in dirs:
-        (templates_dir / d).mkdir(parents=True, exist_ok=True)
-
-    for profile, content in POLICY_TEMPLATES.items():
-        _write_if_missing(templates_dir / "policies" / f"{profile}.yml.j2", content)
-    for profile, content in RESOURCE_TEMPLATES.items():
-        _write_if_missing(templates_dir / "resources" / f"{profile}.yml.j2", content)
-
-    _write_if_missing(templates_dir / "common" / "logging.yml.j2", LOGGING_TEMPLATE)
-    _write_if_missing(templates_dir / "labels" / "traefik.yml.j2", TRAEFIK_LABEL_TEMPLATE)
-    _write_if_missing(templates_dir / "labels" / "homepage.yml.j2", HOMEPAGE_LABEL_TEMPLATE)
-    _write_if_missing(templates_dir / "mounts" / "runtime-config.yml.j2", RUNTIME_CONFIG_MOUNT)
-    _write_if_missing(templates_dir / "healthchecks" / "http.yml.j2", HEALTHCHECK_HTTP)
-    _write_if_missing(templates_dir / "placement" / "node-label.yml.j2",
-                      "        - node.role == manager\n        - node.labels.TODO == true\n")
+def ensure_shared_templates(templates_dir: Path) -> list[str]:
+    """Create missing shared snippets and return only the paths written."""
+    created = []
+    for relative, content in _builtin_template_map().items():
+        path = templates_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(content, encoding="utf-8")
+            created.append(str(path))
+    return created
 
 
 # ---------------------------------------------------------------------------
@@ -793,11 +780,11 @@ def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
     (stack_dir / "configs").mkdir(exist_ok=True)
     secrets_dir = stack_dir / "secrets"
     secrets_dir.mkdir(exist_ok=True)
-    (stack_dir / "configs" / ".gitkeep").touch()
+    configs_gitkeep = stack_dir / "configs" / ".gitkeep"
+    configs_gitkeep.touch()
 
-    ensure_shared_templates(cfg.templates_dir)
-
-    created = []
+    created = ensure_shared_templates(cfg.templates_dir)
+    created.append(str(configs_gitkeep))
 
     for directory in config_directories:
         directory.mkdir(parents=True, exist_ok=True)
@@ -833,6 +820,7 @@ def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
     gitkeep = secrets_dir / ".gitkeep"
     if not gitkeep.exists():
         gitkeep.touch()
+        created.append(str(gitkeep))
 
     stack_yml_path = stack_dir / "stack.yml"
     stack_yml_path.write_text(generate_stack_yml(cfg), encoding="utf-8")
@@ -847,4 +835,3 @@ def generate_stack(cfg: StackConfig, overwrite: bool = False) -> list[str]:
     created.append(str(readme_path))
 
     return created
-

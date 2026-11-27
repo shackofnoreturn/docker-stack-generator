@@ -17,6 +17,7 @@ A Python GUI application to scaffold Docker Swarm stack files
 - **Service configuration files** — import or create files, edit UTF-8 text, and add nested subdirectories under `configs/<service>/`
 - **Semaphore deployments** - launch configured playbooks, monitor task status and output, resume saved runs, and check service endpoint reachability
 - **Preview** — live `stack.yml` and `compose.yml.j2` preview before writing any files
+- **Generate & Sync** — generate a stack, commit generated files in the destination repository, and push to its upstream branch
 - **Recent stacks** — quick access to previously generated stacks
 - **Same output format** as the original `new-stack.sh`
 
@@ -60,6 +61,32 @@ docker-stack-generator/
 ├── pyproject.toml
 └── README.md
 ```
+
+## Generate & Sync
+
+Click **Generate Stack** to generate locally as before, or use its dropdown arrow
+and choose **Generate & Sync** to also commit and push in the repository containing
+the configured stacks root. Git must be installed, the destination must be on a
+branch with an existing remote upstream, and Git author identity and authentication
+must already be configured. Git credentials are not stored by this application;
+interactive credential prompts are disabled.
+
+Only files written by this generation are included in the commit, including new
+shared templates and `.gitkeep` files. Unrelated files and unrelated staged changes
+are left untouched. Existing secret files and shared templates are not rewritten
+or added; newly generated secret stubs are included unless ignored by Git.
+Git ignore rules are respected for untracked files. Review service configuration
+contents before generating: generated configuration files may contain sensitive data.
+Commits are clearly attributed, for example:
+`Docker Stack Generator: generate stack production/redis`.
+
+Sync pushes the current destination branch to its configured upstream, including
+any earlier unpushed commits on that branch. It never pulls, merges, rebases, or
+force-pushes. Invalid repository setup is reported before generation. If commit or
+push fails after generation, the files remain generated and saved to the library,
+and the error is displayed. Local commits are retained on push failure; resolve
+the problem and retry **Generate & Sync** (allowing overwrite), or push manually.
+If there are no generated changes, sync still attempts to push pending commits.
 
 ## Settings
 
@@ -253,4 +280,3 @@ stacks/templates/      # shared Jinja snippets (created once, never overwritten)
         - homepage.icon=mdi-account-question
         - homepage.href=https://whoami.${DOMAIN}
         - homepage.description=Traefik whoami test service
-
