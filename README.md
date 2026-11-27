@@ -49,6 +49,14 @@ Navigate using the main tabs. **Edit > Settings** (`Ctrl+,`) opens settings,
 and **File > New Stack** (`Ctrl+N`) starts a fresh stack. There is no separate
 navigation toolbar or Settings tab.
 
+New stack names use lowercase hyphen-separated identifiers: both `arr-media`
+and `Arr Media` produce `arr-media`. This applies to previews, output paths,
+saved stacks, and library duplicates. Service identifiers remain unchanged.
+Existing saved stack names are not automatically renamed; when loading a legacy
+stack, its stored name is retained until you change its display name. Enter
+`arr-media` explicitly to rename a legacy `Arr Media`/`arr_media` definition;
+the old library entry and generated directory are not deleted automatically.
+
 ## Stack Monitoring
 
 Open **Monitoring** to see all stacks and services saved in **Stack Library**,

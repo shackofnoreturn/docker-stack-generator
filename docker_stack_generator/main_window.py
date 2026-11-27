@@ -38,7 +38,7 @@ from docker_stack_generator.generator import (
     GenerationError,
     ServiceConfig,
     StackConfig,
-    slugify,
+    stack_slugify,
 )
 from docker_stack_generator.highlighter import Jinja2YamlHighlighter
 from docker_stack_generator.service_dialog import ServiceDialog
@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Docker Stack Generator")
         self.setMinimumSize(980, 680)
         self._services: list[ServiceConfig] = []
+        self._loaded_stack_identity: Optional[tuple[str, str]] = None
         self._generate_worker: Optional[GenerateWorker] = None
 
         self._build_menu()
@@ -360,8 +361,14 @@ class MainWindow(QMainWindow):
     # Slug / path update
     # ------------------------------------------------------------------
 
+    def _stack_name(self, text: str) -> str:
+        identity = getattr(self, "_loaded_stack_identity", None)
+        if identity is not None and text.strip() == identity[0]:
+            return identity[1]
+        return stack_slugify(text)
+
     def _update_preview_header(self, text: str):
-        slug = slugify(text)
+        slug = self._stack_name(text)
         self._slug_label.setText(f"→ {slug}" if slug else "")
         self._update_path_label()
         self._refresh_preview()
@@ -369,7 +376,7 @@ class MainWindow(QMainWindow):
     def _update_path_label(self):
         root = settings.stacks_root
         env = self._env_input.text().strip() or settings.stacks_env
-        name = slugify(self._stack_name_input.text().strip())
+        name = self._stack_name(self._stack_name_input.text().strip())
         if root and env and name:
             path = str(Path(root) / env / name)
             self._path_label.setText(f"<b>{path}</b>")
@@ -472,7 +479,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_preview(self):
         name_raw = self._stack_name_input.text().strip()
-        name = slugify(name_raw)
+        name = self._stack_name(name_raw)
         if not name or not self._services:
             self._preview_rendered.setPlainText("")
             self._preview_compose_j2.setPlainText("")
@@ -515,7 +522,7 @@ class MainWindow(QMainWindow):
 
     def _save_to_library(self):
         name_raw = self._stack_name_input.text().strip()
-        name = slugify(name_raw)
+        name = self._stack_name(name_raw)
         if not name:
             QMessageBox.warning(self, "Validation", "Please enter a stack name before saving.")
             return
@@ -542,6 +549,7 @@ class MainWindow(QMainWindow):
                 return
 
         cfg = saved.config
+        self._loaded_stack_identity = (cfg.display_name.strip(), cfg.name)
         self._stack_name_input.blockSignals(True)
         self._env_input.blockSignals(True)
         self._stack_name_input.setText(cfg.display_name)
@@ -575,7 +583,7 @@ class MainWindow(QMainWindow):
         if self._generate_worker is not None and self._generate_worker.isRunning():
             return
         name_raw = self._stack_name_input.text().strip()
-        name = slugify(name_raw)
+        name = self._stack_name(name_raw)
 
         if not name:
             QMessageBox.warning(self, "Validation", "Please enter a stack name.")
@@ -736,6 +744,7 @@ class MainWindow(QMainWindow):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
+        self._loaded_stack_identity = None
         self._stack_name_input.clear()
         self._env_input.setText(settings.stacks_env)
         self._description_input.clear()

@@ -119,6 +119,11 @@ def slugify(value: str) -> str:
     return value
 
 
+def stack_slugify(value: str) -> str:
+    """Use hyphens for stack names without changing service identifiers."""
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+
 def split_image(image: str) -> tuple[str, str]:
     """Split 'repo/name:tag' → ('repo/name', 'tag'). Defaults tag to 'latest'."""
     last = image.split("/")[-1]

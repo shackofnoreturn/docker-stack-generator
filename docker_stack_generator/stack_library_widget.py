@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from docker_stack_generator.config import settings
-from docker_stack_generator.generator import slugify
+from docker_stack_generator.generator import stack_slugify
 from docker_stack_generator.stack_library import SavedStack, stack_library
 from docker_stack_generator.widgets import GenerateButton, HSeparator
 
@@ -72,7 +72,7 @@ class DuplicateStackDialog(QDialog):
         layout.addWidget(btn_box)
 
     def _on_accept(self):
-        if not slugify(self._name_input.text().strip()):
+        if not stack_slugify(self._name_input.text().strip()):
             QMessageBox.warning(self, "Validation", "Please enter a valid stack name.")
             return
         if not self._env_input.text().strip():

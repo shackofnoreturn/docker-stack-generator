@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from docker_stack_generator.generator import (
     StackConfig,
     VolumeMount,
     slugify,
+    stack_slugify,
 )
 
 _DEFAULT_LIBRARY_DIR = Path.home() / ".config" / "docker-stack-generator" / "library"
@@ -32,7 +34,7 @@ def _now_iso() -> str:
 
 def stack_key(environment: str, name: str) -> str:
     env_slug = slugify(environment) or "default"
-    name_slug = slugify(name)
+    name_slug = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-_")
     return f"{env_slug}__{name_slug}"
 
 
@@ -333,7 +335,7 @@ class StackLibrary:
         existing = self.load_stack(key)
         if not existing:
             return None
-        new_name = slugify(new_display_name)
+        new_name = stack_slugify(new_display_name)
         if not new_name:
             return None
         env = (new_environment or existing.config.environment).strip() or "development"
