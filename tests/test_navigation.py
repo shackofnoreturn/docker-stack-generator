@@ -27,6 +27,8 @@ class NavigationTests(unittest.TestCase):
             self.assertEqual(settings[0].shortcut().toString(), "Ctrl+,")
             self.assertTrue(settings[0].isEnabled())
             self.assertTrue(any("New Stack" in action.text() for action in menus["&File"].actions()))
+            view_menu = menus["&View"]
+            self.assertTrue(any("Preview" in action.text() for action in view_menu.actions()))
         finally:
             window.deleteLater()
 
@@ -35,6 +37,7 @@ class NavigationTests(unittest.TestCase):
         from docker_stack_generator.main_window import MainWindow
         window = MainWindow.__new__(MainWindow)
         QMainWindow.__init__(window)
+        window._build_menu()
 
         def widget():
             result = QWidget()
@@ -42,7 +45,10 @@ class NavigationTests(unittest.TestCase):
             result.generate_requested = Mock()
             result.edit_service_requested = Mock()
             result.edit_stack_requested = Mock()
+            result.open_stack_requested = Mock()
             result.new_stack_requested = Mock()
+            result.add_service_requested = Mock()
+            result.remove_service_requested = Mock()
             result.refresh_stacks = Mock()
             return result
 
@@ -55,10 +61,20 @@ class NavigationTests(unittest.TestCase):
         try:
             labels = [window._tabs.tabText(index) for index in range(window._tabs.count())]
             self.assertEqual(len(labels), 5)
+            self.assertTrue(labels[0].endswith("Stack Library"))
+            self.assertTrue(labels[1].endswith("Template Library"))
+            self.assertTrue(labels[2].endswith("Preview"))
             self.assertTrue(labels[3].endswith("Deployments"))
             self.assertTrue(labels[4].endswith("Monitoring"))
             self.assertTrue(all(any(ord(character) > 127 for character in label) for label in labels))
             self.assertFalse(any("Settings" in label for label in labels))
+            preview_action = next(
+                action
+                for action in window.menuBar().actions()
+                if action.text() == "&View"
+            ).menu().actions()[0]
+            preview_action.trigger()
+            self.assertIs(window._tabs.currentWidget(), window._preview_tab)
         finally:
             window.deleteLater()
 

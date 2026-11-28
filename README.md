@@ -48,9 +48,17 @@ On Omarchy, run **Install Omarchy application shortcut** once to add Docker Stac
 Generator to the applications menu with its icon. Run the task again after moving
 the checkout.
 
-Navigate using the main tabs. **Edit > Settings** (`Ctrl+,`) opens settings,
-and **File > New Stack** (`Ctrl+N`) starts a fresh stack. There is no separate
-navigation toolbar or Settings tab.
+Navigate using the main tabs. **Stack Library** and **Template Library** come
+before **Preview**, which shows the rendered Compose file, source template, and
+stack variables. **Edit > Settings** (`Ctrl+,`) opens settings, and **File > New
+Stack** (`Ctrl+N`) starts a fresh stack. There is no separate navigation toolbar
+or Settings tab.
+
+In **Stack Library**, select a saved stack to view its services. Use **Add
+Service** or select a service and choose **Remove Service** to update the saved
+definition. Removing a service requires confirmation. These changes update the
+library definition; generated files on disk are not changed until you generate
+the stack again.
 
 New stack names use lowercase hyphen-separated identifiers: both `arr-media`
 and `Arr Media` produce `arr-media`. This applies to previews, output paths,

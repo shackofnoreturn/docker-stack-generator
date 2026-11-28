@@ -102,7 +102,10 @@ class StackLibraryWidget(QWidget):
     generate_requested = pyqtSignal(object, bool)  # SavedStack, sync
     edit_service_requested = pyqtSignal(object, int)  # SavedStack, service index
     edit_stack_requested = pyqtSignal(object)  # SavedStack
+    open_stack_requested = pyqtSignal(object)  # SavedStack, open in the new-stack dialog
     new_stack_requested = pyqtSignal()
+    add_service_requested = pyqtSignal(object)  # SavedStack
+    remove_service_requested = pyqtSignal(object, int)  # SavedStack, service index
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -190,7 +193,7 @@ class StackLibraryWidget(QWidget):
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         self._list.currentItemChanged.connect(self._on_selection_changed)
-        self._list.itemDoubleClicked.connect(lambda _: self._load_selected())
+        self._list.itemDoubleClicked.connect(lambda _: self._edit_selected_stack())
         lv.addWidget(self._list, 1)
 
         splitter.addWidget(left)
@@ -238,6 +241,7 @@ class StackLibraryWidget(QWidget):
         self._svc_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._svc_table.setAlternatingRowColors(True)
         self._svc_table.cellDoubleClicked.connect(self._on_service_double_clicked)
+        self._svc_table.currentCellChanged.connect(self._update_service_actions)
         self._svc_table.verticalHeader().setVisible(False)
         hdr = self._svc_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -246,6 +250,19 @@ class StackLibraryWidget(QWidget):
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         sg.addWidget(self._svc_table)
+
+        service_actions = QHBoxLayout()
+        self._add_service_btn = QPushButton("＋ Add Service")
+        self._add_service_btn.setEnabled(False)
+        self._add_service_btn.clicked.connect(self._add_service_selected)
+        service_actions.addWidget(self._add_service_btn)
+
+        self._remove_service_btn = QPushButton("✕ Remove Service")
+        self._remove_service_btn.setEnabled(False)
+        self._remove_service_btn.clicked.connect(self._remove_service_selected)
+        service_actions.addWidget(self._remove_service_btn)
+        service_actions.addStretch()
+        sg.addLayout(service_actions)
         rv.addWidget(svc_group, 1)
 
         # Action bar
@@ -389,6 +406,8 @@ class StackLibraryWidget(QWidget):
         self._lbl_updated.setText(_fmt_ts(entry.updated_at))
         self._lbl_generated.setText(_fmt_ts(entry.last_generated_at))
 
+        self._svc_table.clearSelection()
+        self._svc_table.setCurrentCell(-1, -1)
         self._svc_table.setRowCount(len(cfg.services))
         for row, svc in enumerate(cfg.services):
             self._svc_table.setItem(row, 0, QTableWidgetItem(svc.display_name))
@@ -396,6 +415,7 @@ class StackLibraryWidget(QWidget):
             self._svc_table.setItem(row, 2, QTableWidgetItem(svc.port))
             self._svc_table.setItem(row, 3, QTableWidgetItem(svc.restart_profile))
             self._svc_table.setItem(row, 4, QTableWidgetItem(svc.resource_profile))
+        self._update_service_actions()
 
         self._load_btn.setEnabled(True)
         self._generate_btn.setEnabled(not self._generation_busy)
@@ -416,6 +436,7 @@ class StackLibraryWidget(QWidget):
         self._dup_btn.setEnabled(False)
         self._open_btn.setEnabled(False)
         self._del_btn.setEnabled(False)
+        self._update_service_actions()
 
     # ------------------------------------------------------------------
     # Actions
@@ -425,6 +446,26 @@ class StackLibraryWidget(QWidget):
         if not self._current:
             return
         self.load_requested.emit(self._current)
+
+    def _edit_selected_stack(self):
+        if self._current is not None:
+            self.open_stack_requested.emit(self._current)
+
+    def _add_service_selected(self):
+        if self._current is not None:
+            self.add_service_requested.emit(self._current)
+
+    def _remove_service_selected(self):
+        row = self._svc_table.currentRow()
+        if self._current is not None and row >= 0:
+            self.remove_service_requested.emit(self._current, row)
+
+    def _update_service_actions(self, *_):
+        has_stack = self._current is not None
+        self._add_service_btn.setEnabled(has_stack)
+        self._remove_service_btn.setEnabled(
+            has_stack and 0 <= self._svc_table.currentRow() < len(self._current.config.services)
+        )
 
     def _on_service_double_clicked(self, row: int, _column: int):
         if self._current is None or not 0 <= row < len(self._current.config.services):

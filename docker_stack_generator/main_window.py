@@ -112,17 +112,17 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(settings_act)
 
         view_menu = menu.addMenu("&View")
-        stack_act = QAction("Stack &Generator  Ctrl+1", self)
+        stack_act = QAction("&Preview  Ctrl+1", self)
         stack_act.setShortcut("Ctrl+1")
-        stack_act.triggered.connect(lambda: self._tabs.setCurrentIndex(0))
+        stack_act.triggered.connect(lambda: self._tabs.setCurrentWidget(self._preview_tab))
         view_menu.addAction(stack_act)
         lib_act = QAction("Stack &Library  Ctrl+2", self)
         lib_act.setShortcut("Ctrl+2")
-        lib_act.triggered.connect(lambda: self._tabs.setCurrentIndex(1))
+        lib_act.triggered.connect(lambda: self._tabs.setCurrentWidget(self._stack_library_widget))
         view_menu.addAction(lib_act)
         tpl_act = QAction("&Template Library  Ctrl+3", self)
         tpl_act.setShortcut("Ctrl+3")
-        tpl_act.triggered.connect(lambda: self._tabs.setCurrentIndex(2))
+        tpl_act.triggered.connect(lambda: self._tabs.setCurrentWidget(self._tpl_manager))
         view_menu.addAction(tpl_act)
         deploy_act = QAction("&Deployments  Ctrl+4", self)
         deploy_act.setShortcut("Ctrl+4")
@@ -154,21 +154,23 @@ class MainWindow(QMainWindow):
         )
         outer.addWidget(self._tabs)
 
-        # ---- Tab 1: Stack Generator ----------------------------------------
-        self._tabs.addTab(self._build_stack_tab(), "🗋  Stack Generator")
+        self._preview_tab = self._build_stack_tab()
 
-        # ---- Tab 2: Stack Library ------------------------------------------
         self._stack_library_widget = StackLibraryWidget()
         self._stack_library_widget.load_requested.connect(self._load_from_library)
         self._stack_library_widget.generate_requested.connect(self._generate_from_library)
         self._stack_library_widget.edit_service_requested.connect(self._edit_library_service)
         self._stack_library_widget.edit_stack_requested.connect(self._edit_library_stack)
+        self._stack_library_widget.open_stack_requested.connect(self._new_stack)
         self._stack_library_widget.new_stack_requested.connect(self._new_stack)
+        self._stack_library_widget.add_service_requested.connect(self._add_library_service)
+        self._stack_library_widget.remove_service_requested.connect(self._remove_library_service)
         self._tabs.addTab(self._stack_library_widget, "📚  Stack Library")
 
-        # ---- Tab 3: Template Library ---------------------------------------
         self._tpl_manager = TemplateManagerWidget()
         self._tabs.addTab(self._tpl_manager, "📂  Template Library")
+        self._tabs.addTab(self._preview_tab, "🗋  Preview")
+
         self._deployment_widget = DeploymentWidget()
         self._tabs.addTab(self._deployment_widget, "🚀  Deployments")
         self._monitoring_widget = MonitoringWidget()
@@ -188,7 +190,7 @@ class MainWindow(QMainWindow):
         self._status.showMessage("Ready.")
 
     # ------------------------------------------------------------------
-    # Stack Generator tab contents
+    # Preview tab contents
     # ------------------------------------------------------------------
 
     def _build_stack_tab(self) -> QWidget:
@@ -459,6 +461,50 @@ class MainWindow(QMainWindow):
             f"Saved service '{updated.display_name}' in '{saved.config.display_name}'."
         )
 
+    def _add_library_service(self, saved: SavedStack):
+        cfg = deepcopy(saved.config)
+        dlg = ServiceDialog(self, vault=self._monitoring_widget._vault)
+        if not dlg.exec():
+            return
+
+        service = dlg.result_service()
+        if any(existing.name == service.name for existing in cfg.services):
+            QMessageBox.warning(
+                self,
+                "Duplicate service",
+                f"A service named '{service.name}' already exists in this stack.",
+            )
+            return
+
+        cfg.services.append(service)
+        updated = stack_library.save_stack(cfg, generated=False)
+        self._stack_library_widget.refresh(select_key=updated.key)
+        self._status.showMessage(
+            f"Added service '{service.display_name}' to '{updated.config.display_name}'."
+        )
+
+    def _remove_library_service(self, saved: SavedStack, index: int):
+        if not 0 <= index < len(saved.config.services):
+            return
+
+        service = saved.config.services[index]
+        reply = QMessageBox.question(
+            self,
+            "Remove Service",
+            f"Remove service '{service.display_name}' from '{saved.config.display_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        cfg = deepcopy(saved.config)
+        removed = cfg.services.pop(index)
+        updated = stack_library.save_stack(cfg, generated=False)
+        self._stack_library_widget.refresh(select_key=updated.key)
+        self._status.showMessage(
+            f"Removed service '{removed.display_name}' from '{updated.config.display_name}'."
+        )
+
     def _edit_library_stack(self, saved: SavedStack):
         display_name, accepted = QInputDialog.getText(
             self,
@@ -539,7 +585,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_main_tab_changed(self, index: int):
-        if index == 0:
+        if self._tabs.widget(index) is self._preview_tab:
             self._refresh_preview()
 
     def _refresh_preview(self):
@@ -635,7 +681,7 @@ class MainWindow(QMainWindow):
             target = Path(effective_root) / cfg.environment / cfg.name
             self._overwrite_check.setChecked(target.exists())
 
-        self._tabs.setCurrentIndex(0)
+        self._tabs.setCurrentWidget(self._preview_tab)
         self._status.showMessage(
             f"Loaded '{cfg.display_name}' [{cfg.environment}] from Stack Library."
         )
@@ -799,34 +845,53 @@ class MainWindow(QMainWindow):
     # Form reset
     # ------------------------------------------------------------------
 
-    def _new_stack(self):
-        dlg = NewStackDialog(settings.stacks_env, self)
+    def _new_stack(self, saved: Optional[SavedStack] = None):
+        dlg = NewStackDialog(
+            settings.stacks_env,
+            self,
+            config=saved.config if saved else None,
+        )
         if not dlg.exec():
             return
 
         if self._services:
             reply = QMessageBox.question(
                 self,
-                "New Stack",
-                "Start a new stack? Current services will be cleared.",
+                "Edit Saved Stack" if saved else "New Stack",
+                (
+                    f"Open <b>{saved.config.display_name}</b> in the generator? "
+                    "Current services will be replaced."
+                    if saved
+                    else "Start a new stack? Current services will be cleared."
+                ),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
         display_name, environment, description = dlg.values()
-        self._loaded_stack_identity = None
+        if saved and display_name == saved.config.display_name:
+            self._loaded_stack_identity = (display_name, saved.config.name)
+        else:
+            self._loaded_stack_identity = None
         self._stack_name_input.setText(display_name)
         self._env_input.setText(environment)
         self._description_input.setPlainText(description)
-        self._services.clear()
+        self._services = deepcopy(saved.config.services) if saved else []
         self._refresh_services_list()
         self._preview_rendered.clear()
         self._preview_compose_j2.clear()
         self._preview_stack_yml.clear()
-        self._overwrite_check.setChecked(False)
-        self._tabs.setCurrentIndex(0)
-        self._status.showMessage(f"New stack '{display_name}' is ready for services.")
+        target_name = self._stack_name(display_name)
+        effective_root = settings.stacks_root or (saved.config.stacks_root if saved else "")
+        target_exists = bool(
+            effective_root
+            and (Path(effective_root) / environment / target_name).exists()
+        )
+        self._overwrite_check.setChecked(target_exists)
+        self._tabs.setCurrentWidget(self._preview_tab)
+        action = "Stack" if saved else "New stack"
+        self._status.showMessage(f"{action} '{display_name}' is ready for editing.")
 
     def _reset_form(self):
         self._new_stack()
@@ -876,14 +941,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _backup_library(self):
-        self._tabs.setCurrentIndex(1)
+        self._tabs.setCurrentWidget(self._stack_library_widget)
         self._stack_library_widget._backup_library()
 
     def _restore_library(self):
-        self._tabs.setCurrentIndex(1)
+        self._tabs.setCurrentWidget(self._stack_library_widget)
         self._stack_library_widget._restore_library()
 
     def _export_csv(self):
-        self._tabs.setCurrentIndex(1)
+        self._tabs.setCurrentWidget(self._stack_library_widget)
         self._stack_library_widget._export_csv()
 
