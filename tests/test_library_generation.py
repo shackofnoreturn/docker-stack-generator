@@ -1,6 +1,8 @@
 import importlib.util
 import os
 import unittest
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
@@ -33,6 +35,7 @@ class LibraryGenerationTests(unittest.TestCase):
         ))
 
     def test_new_stack_dialog_initializes_generator_from_stack_library_action(self):
+        from PyQt6.QtWidgets import QMessageBox
         from docker_stack_generator.main_window import MainWindow
 
         self.window._stack_name_input = Mock()
@@ -45,10 +48,14 @@ class LibraryGenerationTests(unittest.TestCase):
         self.window._preview_stack_yml = Mock()
         self.window._overwrite_check = Mock()
         self.window._tabs = Mock()
+        self.window._preview_tab = object()
         self.window._loaded_stack_identity = ("Old", "old")
         self.window._refresh_services_list = Mock()
         with patch("docker_stack_generator.main_window.NewStackDialog") as dialog_class, \
-            patch("docker_stack_generator.main_window.QMessageBox.question", return_value=2):
+                patch(
+                    "docker_stack_generator.main_window.QMessageBox.question",
+                    return_value=QMessageBox.StandardButton.Yes,
+                ):
             dialog_class.return_value.exec.return_value = 1
             dialog_class.return_value.values.return_value = ("New Stack", "production", "Description")
             MainWindow._new_stack(self.window)
@@ -60,7 +67,7 @@ class LibraryGenerationTests(unittest.TestCase):
         self.assertEqual(self.window._services, [])
         self.window._refresh_services_list.assert_called_once_with()
         self.window._overwrite_check.setChecked.assert_called_once_with(False)
-        self.window._tabs.setCurrentIndex.assert_called_once_with(0)
+        self.window._tabs.setCurrentWidget.assert_called_once_with(self.window._preview_tab)
         self.assertIsNone(self.window._loaded_stack_identity)
 
     def test_existing_stack_opens_prefilled_dialog_and_keeps_services(self):
@@ -76,6 +83,7 @@ class LibraryGenerationTests(unittest.TestCase):
         self.window._preview_stack_yml = Mock()
         self.window._overwrite_check = Mock()
         self.window._tabs = Mock()
+        self.window._preview_tab = object()
         self.window._loaded_stack_identity = None
         self.window._refresh_services_list = Mock()
         with patch("docker_stack_generator.main_window.NewStackDialog") as dialog_class, \
@@ -117,7 +125,7 @@ class LibraryGenerationTests(unittest.TestCase):
     def test_cancel_existing_stack_dialog_preserves_current_services(self):
         from docker_stack_generator.main_window import MainWindow
 
-        current_service = make_service(name="current")
+        current_service = replace(make_service(), name="current")
         self.window._services = [current_service]
         self.window._stack_name_input = Mock()
         with patch("docker_stack_generator.main_window.NewStackDialog") as dialog_class:
@@ -230,6 +238,119 @@ class LibraryGenerationTests(unittest.TestCase):
         self.assertTrue(widget._generate_btn.isEnabled())
         widget._clear_details()
         self.assertFalse(widget._generate_btn.isEnabled())
+
+    def test_library_add_service_opens_dialog_and_saves_appended_copy(self):
+        from docker_stack_generator.main_window import MainWindow
+
+        new_service = replace(make_service(), name="nginx", display_name="Nginx")
+        self.window._monitoring_widget = Mock(_vault=object())
+        self.window._stack_library_widget.refresh = Mock()
+        with patch("docker_stack_generator.main_window.ServiceDialog") as dialog_class, \
+                patch(
+                    "docker_stack_generator.main_window.stack_library.save_stack",
+                    return_value=self.saved,
+                ) as save:
+            dialog_class.return_value.exec.return_value = 1
+            dialog_class.return_value.result_service.return_value = new_service
+
+            MainWindow._add_library_service(self.window, self.saved)
+
+        cfg = save.call_args.args[0]
+        self.assertIsNot(cfg, self.saved.config)
+        self.assertEqual([service.name for service in cfg.services], ["redis", "nginx"])
+        save.assert_called_once_with(cfg, generated=False)
+        self.window._stack_library_widget.refresh.assert_called_once_with(
+            select_key=self.saved.key
+        )
+
+    def test_library_add_service_rejects_duplicate_name(self):
+        from docker_stack_generator.main_window import MainWindow
+
+        self.window._monitoring_widget = Mock(_vault=object())
+        with patch("docker_stack_generator.main_window.ServiceDialog") as dialog_class, \
+                patch("docker_stack_generator.main_window.QMessageBox.warning") as warning, \
+                patch("docker_stack_generator.main_window.stack_library.save_stack") as save:
+            dialog_class.return_value.exec.return_value = 1
+            dialog_class.return_value.result_service.return_value = make_service()
+
+            MainWindow._add_library_service(self.window, self.saved)
+
+        warning.assert_called_once()
+        save.assert_not_called()
+
+    def test_library_remove_service_requires_confirmation_and_saves_remaining_copy(self):
+        from PyQt6.QtWidgets import QMessageBox
+        from docker_stack_generator.main_window import MainWindow
+
+        saved = deepcopy(self.saved)
+        saved.config.services.append(replace(make_service(), name="nginx", display_name="Nginx"))
+        self.window._stack_library_widget.refresh = Mock()
+        with patch(
+            "docker_stack_generator.main_window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ), patch(
+            "docker_stack_generator.main_window.stack_library.save_stack",
+            return_value=saved,
+        ) as save:
+            MainWindow._remove_library_service(self.window, saved, 0)
+
+        cfg = save.call_args.args[0]
+        self.assertEqual([service.name for service in cfg.services], ["nginx"])
+        self.assertEqual(len(saved.config.services), 2)
+        save.assert_called_once_with(cfg, generated=False)
+        self.window._stack_library_widget.refresh.assert_called_once_with(
+            select_key=saved.key
+        )
+
+    def test_library_remove_service_cancel_keeps_saved_stack(self):
+        from PyQt6.QtWidgets import QMessageBox
+        from docker_stack_generator.main_window import MainWindow
+
+        with patch(
+            "docker_stack_generator.main_window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ), patch("docker_stack_generator.main_window.stack_library.save_stack") as save:
+            MainWindow._remove_library_service(self.window, self.saved, 0)
+
+        save.assert_not_called()
+        self.assertEqual(len(self.saved.config.services), 1)
+
+    def test_service_action_buttons_follow_stack_and_row_selection(self):
+        from docker_stack_generator.stack_library_widget import StackLibraryWidget
+
+        widget = StackLibraryWidget()
+        self.addCleanup(widget.deleteLater)
+        self.assertFalse(widget._add_service_btn.isEnabled())
+        self.assertFalse(widget._remove_service_btn.isEnabled())
+        widget._show_entry(self.saved)
+        self.assertTrue(widget._add_service_btn.isEnabled())
+        self.assertFalse(widget._remove_service_btn.isEnabled())
+        widget._svc_table.selectRow(0)
+        self.assertTrue(widget._remove_service_btn.isEnabled())
+        widget._show_entry(self.saved)
+        self.assertEqual(widget._svc_table.currentRow(), -1)
+        self.assertFalse(widget._remove_service_btn.isEnabled())
+        widget._clear_details()
+        self.assertFalse(widget._add_service_btn.isEnabled())
+        self.assertFalse(widget._remove_service_btn.isEnabled())
+
+    def test_service_action_buttons_emit_current_stack_and_row(self):
+        from docker_stack_generator.stack_library_widget import StackLibraryWidget
+
+        widget = StackLibraryWidget()
+        self.addCleanup(widget.deleteLater)
+        widget._show_entry(self.saved)
+        add_requested = Mock()
+        remove_requested = Mock()
+        widget.add_service_requested.connect(add_requested)
+        widget.remove_service_requested.connect(remove_requested)
+
+        widget._add_service_btn.click()
+        widget._svc_table.selectRow(0)
+        widget._remove_service_btn.click()
+
+        add_requested.assert_called_once_with(self.saved)
+        remove_requested.assert_called_once_with(self.saved, 0)
 
     def test_double_clicking_service_row_requests_edit_for_selected_stack(self):
         from docker_stack_generator.stack_library_widget import StackLibraryWidget
