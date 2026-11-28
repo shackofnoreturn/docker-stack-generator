@@ -42,6 +42,7 @@ class NavigationTests(unittest.TestCase):
             result.generate_requested = Mock()
             result.edit_service_requested = Mock()
             result.edit_stack_requested = Mock()
+            result.open_stack_requested = Mock()
             result.new_stack_requested = Mock()
             result.refresh_stacks = Mock()
             return result

@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
         self._stack_library_widget.generate_requested.connect(self._generate_from_library)
         self._stack_library_widget.edit_service_requested.connect(self._edit_library_service)
         self._stack_library_widget.edit_stack_requested.connect(self._edit_library_stack)
+        self._stack_library_widget.open_stack_requested.connect(self._new_stack)
         self._stack_library_widget.new_stack_requested.connect(self._new_stack)
         self._tabs.addTab(self._stack_library_widget, "📚  Stack Library")
 
@@ -799,34 +800,53 @@ class MainWindow(QMainWindow):
     # Form reset
     # ------------------------------------------------------------------
 
-    def _new_stack(self):
-        dlg = NewStackDialog(settings.stacks_env, self)
+    def _new_stack(self, saved: Optional[SavedStack] = None):
+        dlg = NewStackDialog(
+            settings.stacks_env,
+            self,
+            config=saved.config if saved else None,
+        )
         if not dlg.exec():
             return
 
         if self._services:
             reply = QMessageBox.question(
                 self,
-                "New Stack",
-                "Start a new stack? Current services will be cleared.",
+                "Edit Saved Stack" if saved else "New Stack",
+                (
+                    f"Open <b>{saved.config.display_name}</b> in the generator? "
+                    "Current services will be replaced."
+                    if saved
+                    else "Start a new stack? Current services will be cleared."
+                ),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
         display_name, environment, description = dlg.values()
-        self._loaded_stack_identity = None
+        if saved and display_name == saved.config.display_name:
+            self._loaded_stack_identity = (display_name, saved.config.name)
+        else:
+            self._loaded_stack_identity = None
         self._stack_name_input.setText(display_name)
         self._env_input.setText(environment)
         self._description_input.setPlainText(description)
-        self._services.clear()
+        self._services = deepcopy(saved.config.services) if saved else []
         self._refresh_services_list()
         self._preview_rendered.clear()
         self._preview_compose_j2.clear()
         self._preview_stack_yml.clear()
-        self._overwrite_check.setChecked(False)
+        target_name = self._stack_name(display_name)
+        effective_root = settings.stacks_root or (saved.config.stacks_root if saved else "")
+        target_exists = bool(
+            effective_root
+            and (Path(effective_root) / environment / target_name).exists()
+        )
+        self._overwrite_check.setChecked(target_exists)
         self._tabs.setCurrentIndex(0)
-        self._status.showMessage(f"New stack '{display_name}' is ready for services.")
+        action = "Stack" if saved else "New stack"
+        self._status.showMessage(f"{action} '{display_name}' is ready for editing.")
 
     def _reset_form(self):
         self._new_stack()

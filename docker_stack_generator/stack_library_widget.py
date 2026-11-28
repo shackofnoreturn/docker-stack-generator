@@ -102,6 +102,7 @@ class StackLibraryWidget(QWidget):
     generate_requested = pyqtSignal(object, bool)  # SavedStack, sync
     edit_service_requested = pyqtSignal(object, int)  # SavedStack, service index
     edit_stack_requested = pyqtSignal(object)  # SavedStack
+    open_stack_requested = pyqtSignal(object)  # SavedStack, open in the new-stack dialog
     new_stack_requested = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -190,7 +191,7 @@ class StackLibraryWidget(QWidget):
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         self._list.currentItemChanged.connect(self._on_selection_changed)
-        self._list.itemDoubleClicked.connect(lambda _: self._load_selected())
+        self._list.itemDoubleClicked.connect(lambda _: self._edit_selected_stack())
         lv.addWidget(self._list, 1)
 
         splitter.addWidget(left)
@@ -425,6 +426,10 @@ class StackLibraryWidget(QWidget):
         if not self._current:
             return
         self.load_requested.emit(self._current)
+
+    def _edit_selected_stack(self):
+        if self._current is not None:
+            self.open_stack_requested.emit(self._current)
 
     def _on_service_double_clicked(self, row: int, _column: int):
         if self._current is None or not 0 <= row < len(self._current.config.services):
