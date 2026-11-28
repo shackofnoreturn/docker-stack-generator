@@ -287,9 +287,10 @@ def generate_compose_j2(cfg: StackConfig) -> str:
         for key, value in environment.items():
             lines.append(f"      {json.dumps(key)}: {json.dumps(value)}")
         lines.append("")
-        lines.append("{% include '../../templates/common/logging.yml.j2' %}")
+        lines.append("{% include 'templates/common/logging.yml.j2' %}")
 
         # Ports (long-form)
+        lines.append("")
         if svc.ports:
             lines.append("    ports:")
             for pm in svc.ports:
@@ -320,6 +321,7 @@ def generate_compose_j2(cfg: StackConfig) -> str:
 
         # Secrets
         if svc.secrets:
+            lines.append("")
             lines.append("    secrets:")
             for s in svc.secrets:
                 lines.append(f"      - {s}")
@@ -338,13 +340,6 @@ def generate_compose_j2(cfg: StackConfig) -> str:
         lines.append("    deploy:")
         lines.append("      replicas: 1")
         lines.append("")
-        
-        labels = service_labels(svc)
-        if labels:
-            lines.append("      labels:")
-            for key, value in labels.items():
-                lines.append(f"        - {json.dumps(f'{key}={value}')}")
-            lines.append("")
 
         # Placement constraints
         c = svc.constraint
@@ -357,11 +352,21 @@ def generate_compose_j2(cfg: StackConfig) -> str:
                 lines.append(f"          - node.labels.{c.label_key} == true")
             lines.append("")
 
-        lines.append(f"{{% include '../../templates/policies/{svc.restart_profile}.yml.j2' %}}")
-        lines.append(f"{{% include '../../templates/resources/{svc.resource_profile}.yml.j2' %}}")
+        lines.append(f"{{% include 'templates/policies/{svc.restart_profile}.yml.j2' %}}")
         lines.append("")
+        lines.append(f"{{% include 'templates/resources/{svc.resource_profile}.yml.j2' %}}")
+
+        # Labels
+        lines.append("")
+        labels = service_labels(svc)
+        if labels:
+            lines.append("      labels:")
+            for key, value in labels.items():
+                lines.append(f"        - {json.dumps(f'{key}={value}')}")
+            lines.append("")
 
     # Bottom-level networks block
+    lines.append("")
     lines.append("networks:")
     for net_name in all_net_names:
         net_var = cfg.network_vars.get(net_name, net_name.upper().replace("-", "_"))
@@ -413,21 +418,6 @@ def generate_readme(cfg: StackConfig) -> str:
         lines.append(f"| Port | {svc.port} ({svc.port_source}) |")
 
         lines.append("")
-        lines.append("#### Image Runtime Configuration")
-        lines.append("")
-        lines.append("| Field | Value |")
-        lines.append("|---|---|")
-        lines.append(f"| OS | {meta.get('os', 'unknown')} |")
-        lines.append(f"| Architecture | {meta.get('architecture', 'unknown')} |")
-        cfg_data = meta.get("docker_config", {})
-        lines.append(f"| User | {cfg_data.get('User', 'default')} |")
-        lines.append(f"| Working directory | {cfg_data.get('WorkingDir', 'unset')} |")
-        ep = " ".join(cfg_data.get("Entrypoint") or []) or "default"
-        cmd = " ".join(cfg_data.get("Cmd") or []) or "default"
-        lines.append(f"| Entrypoint | `{ep}` |")
-        lines.append(f"| Command | `{cmd}` |")
-
-        lines.append("")
         lines.append("#### Network")
         lines.append("")
         lines.append("| Field | Value |")
@@ -466,41 +456,6 @@ def generate_readme(cfg: StackConfig) -> str:
             lv_clean = str(lv).replace("\n", " ")
             lines.append(f"| `{lk}` | {lv_clean} |")
 
-        oci_fields = [
-            ("title", "org.opencontainers.image.title"),
-            ("description", "org.opencontainers.image.description"),
-            ("url", "org.opencontainers.image.url"),
-            ("source", "org.opencontainers.image.source"),
-            ("documentation", "org.opencontainers.image.documentation"),
-            ("vendor", "org.opencontainers.image.vendor"),
-            ("licenses", "org.opencontainers.image.licenses"),
-            ("created", "org.opencontainers.image.created"),
-            ("revision", "org.opencontainers.image.revision"),
-        ]
-        lines.append("")
-        lines.append("#### Project & Publisher Information")
-        lines.append("")
-        lines.append("| Field | Value |")
-        lines.append("|---|---|")
-        for display_name, label_key in oci_fields:
-            val = labels.get(label_key, "not provided")
-            lines.append(f"| {display_name} | {val} |")
-
-        lines.append("")
-        lines.append("#### Operational Notes")
-        lines.append("")
-        lines.append("- TODO: Document service-specific configuration, storage, routing, healthchecks, and operational behavior.")
-
-    lines.append("")
-    lines.append("# Runtime assumptions")
-    lines.append("")
-    lines.append("- Docker Swarm with the external `traefik` and `monitoring` networks available.")
-    lines.append("- External Docker networks `NETWORK_TRAEFIK` and `NETWORK_MONITORING` must exist.")
-    lines.append("- Required global variables such as `${TZ}`, `${PATH_DOCKER_DATA}`, `${NETWORK_TRAEFIK}`, and `${env}` are supplied by the deployment inventory.")
-    lines.append("- TODO: Add any required node labels, NFS mounts, runtime directories, and external secrets.")
-    lines.append("")
-    lines.append("The stack is designed to work with the infrastructure repository that creates the required Docker networks, runtime directories, and deployment workflow.")
-    lines.append("")
     lines.append("## Files")
     lines.append("")
     lines.append("- `compose.yml.j2`: Jinja2 Docker Compose template")
@@ -509,10 +464,6 @@ def generate_readme(cfg: StackConfig) -> str:
     lines.append("- `secrets/`: Age-encrypted `<secret-name>.age` files (plaintext values remain in the application vault)")
     lines.append("- `../../templates/`: Shared Jinja snippets for policies, resources, logging, labels, placement, healthchecks, and mounts")
     lines.append("- `README.md`: Stack documentation")
-    lines.append("")
-    lines.append("## Secrets")
-    lines.append("")
-    lines.append("- TODO: List required Docker Swarm secrets and explain their purpose; write None if not applicable.")
     lines.append("")
     lines.append("# How")
     lines.append("")
